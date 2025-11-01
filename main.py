@@ -9,6 +9,8 @@ import uvicorn
 import os
 import json
 import asyncio
+import socket
+import subprocess
 from datetime import datetime
 from contextlib import asynccontextmanager
 
@@ -29,6 +31,71 @@ stt_module = None
 llm_module = None
 tts_module = None
 streaming_stt_module = None
+
+
+def kill_process_on_port(port: int):
+    """
+    Завершает процесс, занимающий указанный порт
+    
+    Args:
+        port: номер порта для проверки
+    """
+    try:
+        # Проверяем если порт занят
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        result = sock.connect_ex(('127.0.0.1', port))
+        sock.close()
+        
+        if result == 0:
+            # Порт занят, ищем и убиваем процесс
+            print(f"⚠️  Порт {port} занят, пытаемся завершить процесс...")
+            
+            # Для macOS/Linux используем lsof
+            if os.name == 'posix':
+                try:
+                    # Находим PID процесса на порту
+                    result = subprocess.run(
+                        ['lsof', '-ti', f':{port}'],
+                        capture_output=True,
+                        text=True,
+                        check=False
+                    )
+                    
+                    if result.stdout.strip():
+                        pids = result.stdout.strip().split('\n')
+                        for pid in pids:
+                            if pid:
+                                print(f"🔪 Завершаем процесс PID: {pid}")
+                                subprocess.run(['kill', '-9', pid], check=False)
+                        print(f"✅ Процессы на порту {port} завершены")
+                    else:
+                        print(f"ℹ️  Процесс на порту {port} не найден")
+                except Exception as e:
+                    print(f"⚠️  Не удалось завершить процесс: {e}")
+            
+            # Для Windows используем netstat
+            elif os.name == 'nt':
+                try:
+                    result = subprocess.run(
+                        ['netstat', '-ano'],
+                        capture_output=True,
+                        text=True,
+                        check=False
+                    )
+                    
+                    for line in result.stdout.split('\n'):
+                        if f':{port}' in line and 'LISTENING' in line:
+                            parts = line.split()
+                            if len(parts) > 0:
+                                pid = parts[-1]
+                                print(f"🔪 Завершаем процесс PID: {pid}")
+                                subprocess.run(['taskkill', '/F', '/PID', pid], check=False)
+                                print(f"✅ Процесс на порту {port} завершен")
+                                break
+                except Exception as e:
+                    print(f"⚠️  Не удалось завершить процесс: {e}")
+    except Exception as e:
+        print(f"⚠️  Ошибка проверки порта {port}: {e}")
 
 
 @asynccontextmanager
@@ -113,10 +180,10 @@ async def voice_chat(audio: UploadFile = File(...)):
 
         print(f"[2] Распознанный текст: {user_text}")
 
-        # Генерируем ответ от LLM
+        # Генерируем ответ от LLM (асинхронно)
         print("[3] Генерация ответа от AI...")
         system_prompt = "Ты - полезный голосовой ассистент. Отвечай кратко и по делу, поскольку твой ответ будет озвучен."
-        ai_response = llm_module.generate_response(user_text, system_prompt=system_prompt)
+        ai_response = await llm_module.generate_response_async(user_text, system_prompt=system_prompt)
         print(f"[3] Ответ AI: {ai_response}")
 
         # Синтезируем речь
@@ -284,10 +351,10 @@ async def websocket_voice_endpoint(websocket: WebSocket):
                             "state": "processing"
                         })
 
-                        # Генерируем ответ от LLM
+                        # Генерируем ответ от LLM (асинхронно)
                         print("🤖 Генерация ответа...")
                         system_prompt = "Ты - полезный голосовой ассистент. Отвечай кратко и по делу, поскольку твой ответ будет озвучен."
-                        ai_response = llm_module.generate_response(final_text, system_prompt=system_prompt)
+                        ai_response = await llm_module.generate_response_async(final_text, system_prompt=system_prompt)
                         print(f"💬 Ответ AI: {ai_response}")
 
                         # Добавляем ответ в историю
@@ -392,6 +459,9 @@ def get_default_html():
 if __name__ == "__main__":
     print("\nЗапуск Voice AI Assistant...")
     print("После загрузки откройте: http://localhost:8000\n")
+    
+    # Завершаем процесс на порту 8000 если он занят
+    kill_process_on_port(8000)
 
     uvicorn.run(
         app,

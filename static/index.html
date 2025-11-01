@@ -609,9 +609,8 @@
                         sendSpeakingFinished('fallback timer');
                     }, fallbackDelay);
                     console.log(`⏲️ Fallback таймер установлен на ${fallbackDelay}ms`);
-                });
-
-                setTimeout(() => {
+                    
+                    // Запускаем автовоспроизведение после загрузки
                     const playPromise = audioElement.play();
                     if (playPromise !== undefined) {
                         playPromise
@@ -623,7 +622,24 @@
                                 console.log('ℹ️ Нажмите кнопку play вручную');
                             });
                     }
-                }, 100);
+                });
+
+                // Fallback: если loadeddata не сработал в течение 500ms
+                setTimeout(() => {
+                    if (audioElement.readyState >= 2) {
+                        console.log('📥 Fallback: запуск воспроизведения');
+                        const playPromise = audioElement.play();
+                        if (playPromise !== undefined) {
+                            playPromise
+                                .then(() => {
+                                    console.log('✅ Автовоспроизведение запущено (fallback)');
+                                })
+                                .catch(error => {
+                                    console.error('❌ Автовоспроизведение заблокировано (fallback):', error.message);
+                                });
+                        }
+                    }
+                }, 500);
             }
         }
 
