@@ -68,36 +68,13 @@ def clean_text_from_markdown(text: str) -> str:
     # Удаляем хештеги
     text = re.sub(r'#+', '', text)
     
-    # ВАЖНО: Добавляем пробелы между русскими словами, которые склеились
-    # Простой и агрессивный алгоритм: разделяем длинные последовательности букв
+    # Добавляем пробелы в критических местах для предотвращения склеивания слов
     
     # 1. Строчная + заглавная = граница слова
     text = re.sub(r'([а-яё])([А-ЯЁ])', r'\1 \2', text)
     
     # 2. После знаков препинания без пробелов
     text = re.sub(r'([,.!?;:])([А-ЯЁа-яё])', r'\1 \2', text)
-    
-    # 3. ПРОСТОЙ И АГРЕССИВНЫЙ ПОДХОД: Вставляем пробелы в длинные последовательности русских букв
-    # Разделяем каждые 5-7 букв, чтобы разбить склеенные слова
-    def add_spaces_to_long_sequence(match):
-        seq = match.group(0)
-        if len(seq) <= 6:
-            return seq  # Короткие последовательности не трогаем
-        
-        # Разбиваем на группы по 5-6 символов
-        words = []
-        i = 0
-        while i < len(seq):
-            # Определяем размер группы (5-6 символов)
-            group_size = 5 if i % 2 == 0 else 6
-            end = min(i + group_size, len(seq))
-            words.append(seq[i:end])
-            i = end
-        
-        return ' '.join(words)
-    
-    # Применяем к последовательностям русских букв длиной 7+ символов
-    text = re.sub(r'[А-ЯЁа-яё]{7,}', add_spaces_to_long_sequence, text)
     
     # Удаляем множественные пробелы подряд (оставляем двойной для пауз в речи)
     text = re.sub(r' {3,}', '  ', text)
@@ -263,13 +240,8 @@ async def voice_chat(audio: UploadFile = File(...)):
 
         # Генерируем ответ от LLM (асинхронно)
         print("[3] Генерация ответа от AI...")
-        system_prompt = """Ты - полезный голосовой ассистент в диалоге с пользователем. 
-Отвечай кратко и по делу, поскольку твой ответ будет озвучен.
-ВАЖНО: В ответах НЕ используй звездочки (*), подчеркивания (_) или другие markdown символы форматирования.
-Отвечай простым текстом без разметки. Это голосовой диалог, форматирование не нужно."""
-        ai_response = await llm_module.generate_response_async(user_text, system_prompt=system_prompt)
-        # Очищаем ответ от markdown форматирования
-        ai_response = clean_text_from_markdown(ai_response)
+        ai_response = await llm_module.generate_response_async(user_text, system_prompt=None)
+        # Передаем ответ как есть, без изменений
         print(f"[3] Ответ AI: {ai_response}")
 
         # Синтезируем речь
@@ -445,10 +417,6 @@ async def websocket_voice_endpoint(websocket: WebSocket):
 
                         # Начинаем потоковую генерацию ответа
                         print("🤖 Начало потоковой генерации ответа...")
-                        system_prompt = """Ты - полезный голосовой ассистент в диалоге с пользователем. 
-Отвечай кратко и по делу, поскольку твой ответ будет озвучен.
-ВАЖНО: В ответах НЕ используй звездочки (*), подчеркивания (_) или другие markdown символы форматирования.
-Отвечай простым текстом без разметки. Это голосовой диалог, форматирование не нужно."""
                         
                         full_response = ""
                         text_buffer = ""
@@ -459,22 +427,19 @@ async def websocket_voice_endpoint(websocket: WebSocket):
                         })
                         
                         # Потоковая генерация от LLM и TTS
-                        async for text_chunk in llm_module.generate_response_stream(final_text, system_prompt=system_prompt):
+                        async for text_chunk in llm_module.generate_response_stream(final_text, system_prompt=None):
                             # Логируем оригинальный чанк для отладки
                             print(f"📝 Оригинальный чанк от LLM: '{text_chunk}' (длина: {len(text_chunk)})")
                             
-                            # Очищаем чанк от markdown форматирования
-                            cleaned_chunk = clean_text_from_markdown(text_chunk)
-                            print(f"🧹 Очищенный чанк: '{cleaned_chunk}' (длина: {len(cleaned_chunk)})")
+                            # Передаем текст как есть, без изменений
+                            full_response += text_chunk
+                            text_buffer += text_chunk
                             
-                            full_response += cleaned_chunk
-                            text_buffer += cleaned_chunk
-                            
-                            # Отправляем очищенный текстовый чанк для отображения
-                            if cleaned_chunk:  # Отправляем только если после очистки что-то осталось
+                            # Отправляем текстовый чанк для отображения
+                            if text_chunk:  # Отправляем только если есть текст
                                 await websocket.send_json({
                                     "type": "text_chunk",
-                                    "text": cleaned_chunk
+                                    "text": text_chunk
                                 })
                             
                             # Накопляем текст до предложения (до точки, восклицательного или вопросительного знака)
@@ -534,18 +499,17 @@ async def websocket_voice_endpoint(websocket: WebSocket):
                                 import traceback
                                 traceback.print_exc()
                         
-                        # Очищаем полный ответ от markdown форматирования перед сохранением
+                        # Сохраняем полный ответ как есть, без изменений
                         if full_response:
-                            cleaned_full_response = clean_text_from_markdown(full_response)
-                            state.add_to_history("assistant", cleaned_full_response)
-                            print(f"💬 Полный ответ AI: {cleaned_full_response}")
+                            state.add_to_history("assistant", full_response)
+                            print(f"💬 Полный ответ AI: {full_response}")
                         else:
-                            cleaned_full_response = ""
+                            full_response = ""
                         
                         # Отправляем конец потока
                         await websocket.send_json({
                             "type": "stream_end",
-                            "text": cleaned_full_response
+                            "text": full_response
                         })
                     else:
                         print("⚠️ Пустой финальный текст, игнорируем")

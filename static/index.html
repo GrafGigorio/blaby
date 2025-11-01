@@ -320,11 +320,6 @@
             Готов к работе
         </div>
 
-        <div class="info">
-            💡 Нажмите "Начать диалог" и просто говорите. Ассистент автоматически определит конец фразы и ответит. После
-            ответа диалог продолжится автоматически.
-        </div>
-
         <div class="controls">
             <button id="startBtn" onclick="startDialog()" class="start-btn">
                 🎙️ Начать диалог
@@ -502,25 +497,35 @@
 
         // Визуализатор воспроизведения - всегда активен, но показывает данные только когда идет воспроизведение
         function startPlaybackVisualizer() {
-            if (playbackAnimationId) return; // Уже запущен
+            if (playbackAnimationId) {
+                console.log('ℹ️ Визуализатор воспроизведения уже запущен');
+                return; // Уже запущен
+            }
 
             // Создаем AudioContext если еще не создан
             if (!playbackAudioContext) {
                 playbackAudioContext = new (window.AudioContext || window.webkitAudioContext)();
                 playbackAnalyser = playbackAudioContext.createAnalyser();
                 playbackAnalyser.fftSize = 256;
+                playbackAnalyser.smoothingTimeConstant = 0.8;
                 playbackDataArray = new Uint8Array(playbackAnalyser.frequencyBinCount);
+                console.log('✅ AudioContext для воспроизведения создан');
             }
 
-            // Эквалайзер всегда видим, но анимация начинается только при воспроизведении
-            drawPlaybackVisualizer();
+            // Запускаем цикл анимации
+            console.log('🎨 Запуск визуализатора воспроизведения...');
+            playbackAnimationId = requestAnimationFrame(drawPlaybackVisualizer);
         }
 
         function drawPlaybackVisualizer() {
+            // Запланировать следующий кадр ПЕРЕД проверок, чтобы анимация продолжалась
             playbackAnimationId = requestAnimationFrame(drawPlaybackVisualizer);
 
             const canvas = document.getElementById('playback-visualizer');
-            if (!canvas) return;
+            if (!canvas) {
+                playbackAnimationId = null;
+                return;
+            }
 
             const canvasCtx = canvas.getContext('2d');
             const WIDTH = canvas.width;
@@ -798,21 +803,13 @@
                     audioElement.addEventListener('canplay', () => console.log('▶️ Аудио: canplay'));
                     audioElement.addEventListener('canplaythrough', () => console.log('✅ Аудио: canplaythrough'));
 
-                    // Создаем AudioContext для анализа воспроизводимого аудио
-                    if (!playbackAudioContext) {
-                        playbackAudioContext = new (window.AudioContext || window.webkitAudioContext)();
-                        playbackAnalyser = playbackAudioContext.createAnalyser();
-                        playbackAnalyser.fftSize = 256;
-                        playbackDataArray = new Uint8Array(playbackAnalyser.frequencyBinCount);
-
-                        // Запускаем визуализацию воспроизведения сразу при создании контекста
-                        if (!playbackAnimationId) {
-                            startPlaybackVisualizer();
-                        }
+                    // Убеждаемся, что визуализатор инициализирован
+                    if (!playbackAudioContext || !playbackAnalyser) {
+                        startPlaybackVisualizer();
                     }
 
                     // Разблокируем AudioContext если он в suspended состоянии
-                    if (playbackAudioContext.state === 'suspended') {
+                    if (playbackAudioContext && playbackAudioContext.state === 'suspended') {
                         console.log('🔓 Разблокировка AudioContext...');
                         try {
                             await playbackAudioContext.resume();
@@ -822,20 +819,36 @@
                         }
                     }
 
+                    // Убеждаемся, что визуализатор запущен
+                    if (!playbackAnimationId) {
+                        startPlaybackVisualizer();
+                    }
+
                     // Подключаем audio элемент к анализатору через MediaElementSource
                     // ВАЖНО: Создаем source только один раз для каждого audio элемента
-                    // и проверяем, не был ли уже создан source для этого элемента
-                    if (!audioElement._mediaSourceCreated) {
+                    // и делаем это ДО начала воспроизведения
+                    if (!audioElement._mediaSourceCreated && playbackAudioContext && playbackAnalyser) {
                         try {
                             const source = playbackAudioContext.createMediaElementSource(audioElement);
+                            // ВАЖНО: После создания MediaElementSource, audio элемент больше не подключен к destination
+                            // Подключаем цепочку: source -> analyser -> destination
                             source.connect(playbackAnalyser);
                             playbackAnalyser.connect(playbackAudioContext.destination);
                             audioElement._mediaSourceCreated = true; // Помечаем, что source уже создан
-                            console.log('✅ MediaElementSource создан для audio элемента');
+                            console.log('✅ MediaElementSource создан и подключен для визуализации');
+                            console.log('📊 Анализатор подключен, готов к визуализации');
                         } catch (e) {
                             console.warn('⚠️ Не удалось создать MediaElementSource:', e);
+                            console.warn('⚠️ Детали ошибки:', e.name, e.message);
+                            // Если уже был создан source для этого элемента, это нормально
+                            if (e.name === 'InvalidStateError' && (e.message.includes('MediaElementSource') || e.message.includes('already been connected'))) {
+                                console.log('ℹ️ MediaElementSource уже существует для этого элемента');
+                                audioElement._mediaSourceCreated = true; // Помечаем чтобы не пытаться снова
+                            }
                             // Продолжаем без визуализации
                         }
+                    } else if (!audioElement._mediaSourceCreated) {
+                        console.warn('⚠️ Невозможно создать MediaElementSource: playbackAudioContext или playbackAnalyser не инициализирован');
                     } else {
                         console.log('ℹ️ MediaElementSource уже создан для этого элемента, пропускаем');
                     }
@@ -922,11 +935,8 @@
                                 clearTimeout(timeout);
                                 console.log('✅ Воспроизведение завершено');
                                 URL.revokeObjectURL(audioUrl);
-                                // Если больше нет активных воспроизведений, останавливаем визуализатор
-                                const remaining = currentAudioElements.filter(el => !el.paused && !el.ended);
-                                if (remaining.length === 0) {
-                                    stopPlaybackVisualizer();
-                                }
+                                // Не останавливаем визуализатор при окончании одного элемента,
+                                // так как могут быть другие элементы в очереди
                                 resolve();
                             };
 
