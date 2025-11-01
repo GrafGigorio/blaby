@@ -481,6 +481,10 @@
                         vadCheckInterval = setInterval(checkVoiceActivity, 100);
                         console.log('✅ VAD активирован');
                     }
+                    // Сбрасываем состояние VAD для корректной обработки новой речи
+                    isSpeaking = false;
+                    silenceStart = null;
+                    speechStart = null;
                     break;
                 case 'processing':
                     console.log('📡 Состояние: PROCESSING');
@@ -496,13 +500,13 @@
                 case 'speaking':
                     console.log('📡 Состояние: SPEAKING');
                     updateStatus('🔊 Отвечаю...', 'speaking');
-                    // Останавливаем VAD и запись на время воспроизведения
-                    if (vadCheckInterval) {
-                        clearInterval(vadCheckInterval);
-                        vadCheckInterval = null;
-                        console.log('⏸️ VAD приостановлен (воспроизведение)');
+                    // ОСТАВЛЯЕМ VAD и запись активными для детекции прерывания
+                    // VAD продолжает работать чтобы детектировать речь пользователя
+                    if (!vadCheckInterval) {
+                        vadCheckInterval = setInterval(checkVoiceActivity, 100);
+                        console.log('✅ VAD активирован для детекции прерывания');
                     }
-                    stopAudioRecording();
+                    // НЕ останавливаем запись аудио чтобы детектировать прерывание
                     break;
             }
         }
@@ -584,10 +588,9 @@
                     sendSpeakingFinished('ended event');
                 }, { once: true });
 
-                // Детекция прерывания
+                // Детекция прерывания теперь встроена в VAD
                 audioElement.addEventListener('play', () => {
                     console.log('▶️ Начато воспроизведение ответа');
-                    startInterruptionDetection(audioElement);
                 });
 
                 // Автовоспроизведение с задержкой для загрузки
@@ -643,28 +646,7 @@
             }
         }
 
-        // Детекция прерывания во время воспроизведения
-        function startInterruptionDetection(audioElement) {
-            const checkForSpeech = () => {
-                // Если детектирована речь во время воспроизведения
-                if (currentState === 'speaking' && isSpeaking) {
-                    console.log('⚠️ Детектировано прерывание!');
-                    audioElement.pause();
-                    if (ws && ws.readyState === WebSocket.OPEN) {
-                        ws.send(JSON.stringify({ type: 'interrupt' }));
-                    }
-                }
-            };
-
-            // Проверяем каждые 100мс
-            const intervalId = setInterval(checkForSpeech, 100);
-
-            audioElement.addEventListener('ended', () => {
-                clearInterval(intervalId);
-            }, { once: true });
-        }
-
-        // Простой VAD на основе громкости
+        // Простой VAD на основе громкости (с детекцией прерывания)
         function checkVoiceActivity() {
             if (!analyser || !isDialogActive) return;
 
@@ -687,6 +669,25 @@
                     isSpeaking = true;
                     speechStart = now;
                     silenceStart = null;
+                    
+                    // Если мы в состоянии speaking, это прерывание!
+                    if (currentState === 'speaking') {
+                        console.log('⚠️ Детектировано прерывание во время воспроизведения!');
+                        // Находим активный аудио элемент и останавливаем его
+                        const activeAudio = document.querySelector('#response-audio');
+                        if (activeAudio && !activeAudio.paused) {
+                            activeAudio.pause();
+                        }
+                        // Отправляем interrupt на сервер
+                        if (ws && ws.readyState === WebSocket.OPEN) {
+                            ws.send(JSON.stringify({ type: 'interrupt' }));
+                        }
+                        // Запись НЕ начинаем - сервер переведет в listening состояние
+                        // а handleStateChange уже сбросит VAD состояние
+                        return;
+                    }
+                    
+                    // Нормальное начало речи в состоянии listening
                     startAudioRecording();
                 } else {
                     // Речь продолжается - сбрасываем таймер тишины
@@ -748,6 +749,13 @@
         // Запись аудио для отправки на сервер (RAW PCM для Vosk)
         function startAudioRecording() {
             if (!audioContext || !audioSourceNode) return;
+
+            // Останавливаем старый процессор если он существует
+            if (audioProcessor) {
+                console.log('⚠️ Останавливаем старый процессор аудио');
+                audioProcessor.disconnect();
+                audioProcessor = null;
+            }
 
             // Создаем ScriptProcessorNode для захвата raw PCM audio
             audioProcessor = audioContext.createScriptProcessor(4096, 1, 1);
