@@ -552,14 +552,36 @@
             // Автовоспроизведение ответа
             if (role === 'assistant' && audioUrl) {
                 const audioElement = messageDiv.querySelector('audio');
-                audioElement.addEventListener('ended', () => {
-                    console.log('🔄 Ответ воспроизведен, отправка speaking_finished');
-                    if (ws && ws.readyState === WebSocket.OPEN) {
-                        console.log('📤 Отправка speaking_finished на сервер');
-                        ws.send(JSON.stringify({ type: 'speaking_finished' }));
-                    } else {
-                        console.error('❌ WebSocket не готов для отправки speaking_finished');
+                let speakingFinishedSent = false;
+                let fallbackTimer = null;
+
+                // Функция для отправки speaking_finished (с защитой от дублирования)
+                const sendSpeakingFinished = (source) => {
+                    if (speakingFinishedSent) {
+                        console.log(`⚠️ speaking_finished уже был отправлен, игнорируем (источник: ${source})`);
+                        return;
                     }
+                    speakingFinishedSent = true;
+
+                    console.log(`🔄 Отправка speaking_finished (источник: ${source})`);
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                        ws.send(JSON.stringify({ type: 'speaking_finished' }));
+                        console.log('✅ speaking_finished отправлен');
+                    } else {
+                        console.error('❌ WebSocket не готов');
+                    }
+
+                    // Очищаем таймер если он еще работает
+                    if (fallbackTimer) {
+                        clearTimeout(fallbackTimer);
+                        fallbackTimer = null;
+                    }
+                };
+
+                // Event listener для окончания воспроизведения
+                audioElement.addEventListener('ended', () => {
+                    console.log('🎵 Аудио закончилось (ended event)');
+                    sendSpeakingFinished('ended event');
                 }, { once: true });
 
                 // Детекция прерывания
@@ -577,7 +599,16 @@
                 });
 
                 audioElement.addEventListener('loadeddata', () => {
-                    console.log('📥 Аудио загружено, длительность:', audioElement.duration, 'сек');
+                    const duration = audioElement.duration;
+                    console.log('📥 Аудио загружено, длительность:', duration, 'сек');
+
+                    // Устанавливаем fallback таймер: duration + 500ms запаса
+                    const fallbackDelay = (duration * 1000) + 500;
+                    fallbackTimer = setTimeout(() => {
+                        console.log('⏰ Fallback таймер сработал');
+                        sendSpeakingFinished('fallback timer');
+                    }, fallbackDelay);
+                    console.log(`⏲️ Fallback таймер установлен на ${fallbackDelay}ms`);
                 });
 
                 setTimeout(() => {
