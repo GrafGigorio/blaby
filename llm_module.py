@@ -121,6 +121,60 @@ class LLMModule:
             print(f"Ошибка генерации ответа: {e}")
             return "Извините, произошла ошибка при обработке вашего запроса."
 
+    async def generate_response_stream(self, user_input: str, system_prompt: str = None):
+        """
+        Потоковая генерация ответа от LLM (асинхронный генератор)
+        
+        Args:
+            user_input: текст от пользователя
+            system_prompt: системный промпт (опционально)
+            
+        Yields:
+            str: части ответа по мере генерации
+        """
+        try:
+            # Добавляем сообщение пользователя в историю
+            self.conversation_history.append({
+                "role": "user",
+                "content": user_input
+            })
+            
+            # Формируем сообщения для модели
+            messages = []
+            
+            # Добавляем системный промпт если есть
+            if system_prompt:
+                messages.append({
+                    "role": "system",
+                    "content": system_prompt
+                })
+            
+            # Добавляем историю (последние 10 сообщений)
+            messages.extend(self.conversation_history[-10:])
+            
+            # Получаем потоковый ответ от Ollama
+            full_response = ""
+            async for chunk in await self.async_client.chat(
+                model=self.model_name,
+                messages=messages,
+                stream=True
+            ):
+                content = chunk.message.content
+                if content:
+                    full_response += content
+                    yield content
+            
+            # Сохраняем полный ответ в историю
+            if full_response:
+                self.conversation_history.append({
+                    "role": "assistant",
+                    "content": full_response
+                })
+                
+        except Exception as e:
+            print(f"Ошибка потоковой генерации ответа: {e}")
+            yield "Извините, произошла ошибка при обработке вашего запроса."
+
     def clear_history(self):
         """Очистка истории разговора"""
         self.conversation_history = []

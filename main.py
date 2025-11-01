@@ -11,6 +11,7 @@ import json
 import asyncio
 import socket
 import subprocess
+import base64
 from datetime import datetime
 from contextlib import asynccontextmanager
 
@@ -19,12 +20,92 @@ from llm_module import LLMModule
 from tts_module import TTSModule
 from stt_streaming_module import StreamingSTTModule
 from state_manager import StateManager, DialogState
+import re
 
 # Директории для файлов
 UPLOAD_DIR = Path("uploads")
 OUTPUT_DIR = Path("outputs")
 UPLOAD_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR.mkdir(exist_ok=True)
+
+
+def clean_text_from_markdown(text: str) -> str:
+    """
+    Очищает текст от markdown форматирования (звездочки, подчеркивания и т.д.)
+    ВАЖНО: Сохраняет ВСЕ пробелы между словами и добавляет пробелы там, где они нужны.
+    
+    Args:
+        text: исходный текст
+        
+    Returns:
+        очищенный текст
+    """
+    if not text:
+        return text
+    
+    # Удаляем символы форматирования, заменяя их на пробел если они между буквами
+    # Это предотвращает склеивание слов: "слово*слово" -> "слово слово"
+    
+    # Звездочки: если между буквами/словами, заменяем на пробел, иначе просто удаляем
+    # Сохраняем пробелы вокруг звездочек
+    text = re.sub(r'(\S)\*{1,3}(\S)', r'\1 \2', text)  # Между буквами -> пробел
+    text = re.sub(r'\s*\*{1,3}\s*', ' ', text)  # Со звездочками вокруг -> пробел
+    text = re.sub(r'\*{1,3}', '', text)  # Остальные звездочки просто удаляем
+    
+    # Подчеркивания: аналогично
+    text = re.sub(r'(\S)_{1,3}(\S)', r'\1 \2', text)  # Между буквами -> пробел
+    text = re.sub(r'\s*_{1,3}\s*', ' ', text)  # Со подчеркиваниями вокруг -> пробел
+    text = re.sub(r'_{1,3}', '', text)  # Остальные подчеркивания удаляем
+    
+    # Обратные кавычки: аналогично
+    text = re.sub(r'(\S)`+(\S)', r'\1 \2', text)  # Между буквами -> пробел
+    text = re.sub(r'\s*`+\s*', ' ', text)  # С кавычками вокруг -> пробел
+    text = re.sub(r'`+', '', text)  # Остальные кавычки удаляем
+    
+    # Удаляем квадратные скобки ссылок [текст](url), заменяем только на текст
+    text = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', text)
+    
+    # Удаляем хештеги
+    text = re.sub(r'#+', '', text)
+    
+    # ВАЖНО: Добавляем пробелы между русскими словами, которые склеились
+    # Простой и агрессивный алгоритм: разделяем длинные последовательности букв
+    
+    # 1. Строчная + заглавная = граница слова
+    text = re.sub(r'([а-яё])([А-ЯЁ])', r'\1 \2', text)
+    
+    # 2. После знаков препинания без пробелов
+    text = re.sub(r'([,.!?;:])([А-ЯЁа-яё])', r'\1 \2', text)
+    
+    # 3. ПРОСТОЙ И АГРЕССИВНЫЙ ПОДХОД: Вставляем пробелы в длинные последовательности русских букв
+    # Разделяем каждые 5-7 букв, чтобы разбить склеенные слова
+    def add_spaces_to_long_sequence(match):
+        seq = match.group(0)
+        if len(seq) <= 6:
+            return seq  # Короткие последовательности не трогаем
+        
+        # Разбиваем на группы по 5-6 символов
+        words = []
+        i = 0
+        while i < len(seq):
+            # Определяем размер группы (5-6 символов)
+            group_size = 5 if i % 2 == 0 else 6
+            end = min(i + group_size, len(seq))
+            words.append(seq[i:end])
+            i = end
+        
+        return ' '.join(words)
+    
+    # Применяем к последовательностям русских букв длиной 7+ символов
+    text = re.sub(r'[А-ЯЁа-яё]{7,}', add_spaces_to_long_sequence, text)
+    
+    # Удаляем множественные пробелы подряд (оставляем двойной для пауз в речи)
+    text = re.sub(r' {3,}', '  ', text)
+    
+    # Убираем только пробелы в самом начале и конце строки
+    text = text.strip()
+    
+    return text
 
 # Глобальные экземпляры модулей
 stt_module = None
@@ -182,8 +263,13 @@ async def voice_chat(audio: UploadFile = File(...)):
 
         # Генерируем ответ от LLM (асинхронно)
         print("[3] Генерация ответа от AI...")
-        system_prompt = "Ты - полезный голосовой ассистент. Отвечай кратко и по делу, поскольку твой ответ будет озвучен."
+        system_prompt = """Ты - полезный голосовой ассистент в диалоге с пользователем. 
+Отвечай кратко и по делу, поскольку твой ответ будет озвучен.
+ВАЖНО: В ответах НЕ используй звездочки (*), подчеркивания (_) или другие markdown символы форматирования.
+Отвечай простым текстом без разметки. Это голосовой диалог, форматирование не нужно."""
         ai_response = await llm_module.generate_response_async(user_text, system_prompt=system_prompt)
+        # Очищаем ответ от markdown форматирования
+        ai_response = clean_text_from_markdown(ai_response)
         print(f"[3] Ответ AI: {ai_response}")
 
         # Синтезируем речь
@@ -280,7 +366,6 @@ async def websocket_voice_endpoint(websocket: WebSocket):
 
                 try:
                     # Декодируем base64 аудио
-                    import base64
                     audio_data = base64.b64decode(data.get("data", ""))
 
                     # Обрабатываем аудио через streaming STT
@@ -351,34 +436,116 @@ async def websocket_voice_endpoint(websocket: WebSocket):
                             "state": "processing"
                         })
 
-                        # Генерируем ответ от LLM (асинхронно)
-                        print("🤖 Генерация ответа...")
-                        system_prompt = "Ты - полезный голосовой ассистент. Отвечай кратко и по делу, поскольку твой ответ будет озвучен."
-                        ai_response = await llm_module.generate_response_async(final_text, system_prompt=system_prompt)
-                        print(f"💬 Ответ AI: {ai_response}")
-
-                        # Добавляем ответ в историю
-                        state.add_to_history("assistant", ai_response)
-
-                        # Генерируем TTS
-                        print("🔊 Синтез речи...")
-                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                        output_audio_path = OUTPUT_DIR / f"output_{timestamp}.wav"
-                        await tts_module.synthesize_async(ai_response, str(output_audio_path), language="ru")
-
-                        # Переходим в состояние говорения
+                        # Переходим в состояние говорения для потоковой передачи
                         state.start_speaking()
-
-                        # Отправляем ответ клиенту
-                        await websocket.send_json({
-                            "type": "ai_response",
-                            "text": ai_response,
-                            "audio_url": f"/api/audio/{output_audio_path.name}"
-                        })
-
                         await websocket.send_json({
                             "type": "state",
                             "state": "speaking"
+                        })
+
+                        # Начинаем потоковую генерацию ответа
+                        print("🤖 Начало потоковой генерации ответа...")
+                        system_prompt = """Ты - полезный голосовой ассистент в диалоге с пользователем. 
+Отвечай кратко и по делу, поскольку твой ответ будет озвучен.
+ВАЖНО: В ответах НЕ используй звездочки (*), подчеркивания (_) или другие markdown символы форматирования.
+Отвечай простым текстом без разметки. Это голосовой диалог, форматирование не нужно."""
+                        
+                        full_response = ""
+                        text_buffer = ""
+                        
+                        # Отправляем начало потока
+                        await websocket.send_json({
+                            "type": "stream_start"
+                        })
+                        
+                        # Потоковая генерация от LLM и TTS
+                        async for text_chunk in llm_module.generate_response_stream(final_text, system_prompt=system_prompt):
+                            # Логируем оригинальный чанк для отладки
+                            print(f"📝 Оригинальный чанк от LLM: '{text_chunk}' (длина: {len(text_chunk)})")
+                            
+                            # Очищаем чанк от markdown форматирования
+                            cleaned_chunk = clean_text_from_markdown(text_chunk)
+                            print(f"🧹 Очищенный чанк: '{cleaned_chunk}' (длина: {len(cleaned_chunk)})")
+                            
+                            full_response += cleaned_chunk
+                            text_buffer += cleaned_chunk
+                            
+                            # Отправляем очищенный текстовый чанк для отображения
+                            if cleaned_chunk:  # Отправляем только если после очистки что-то осталось
+                                await websocket.send_json({
+                                    "type": "text_chunk",
+                                    "text": cleaned_chunk
+                                })
+                            
+                            # Накопляем текст до предложения (до точки, восклицательного или вопросительного знака)
+                            # или до определенного размера (50 символов)
+                            if len(text_buffer) >= 50 or any(punct in text_buffer for punct in ['.', '!', '?', '。']):
+                                # Находим границу предложения
+                                sentence_end = -1
+                                for punct in ['.', '!', '?', '。']:
+                                    pos = text_buffer.rfind(punct)
+                                    if pos > sentence_end:
+                                        sentence_end = pos
+                                
+                                if sentence_end >= 0:
+                                    sentence = text_buffer[:sentence_end + 1]
+                                    text_buffer = text_buffer[sentence_end + 1:]
+                                else:
+                                    # Если не нашли предложение, берем первые 50 символов
+                                    sentence = text_buffer[:50]
+                                    text_buffer = text_buffer[50:]
+                                
+                                # Синтезируем предложение в аудио
+                                if sentence.strip():
+                                    print(f"🔊 Синтез: '{sentence[:30]}...'")
+                                    try:
+                                        chunk_count = 0
+                                        async for audio_chunk in tts_module.synthesize_stream(sentence, language="ru"):
+                                            chunk_count += 1
+                                            # Отправляем аудио чанк клиенту (base64)
+                                            audio_base64 = base64.b64encode(audio_chunk).decode('utf-8')
+                                            print(f"📦 Отправка аудио чанка #{chunk_count}, размер: {len(audio_base64)} символов (байт данных: {len(audio_chunk)})")
+                                            await websocket.send_json({
+                                                "type": "audio_chunk",
+                                                "data": audio_base64
+                                            })
+                                        print(f"✅ Синтез завершен, отправлено {chunk_count} чанков")
+                                    except Exception as tts_error:
+                                        print(f"⚠️ Ошибка TTS: {tts_error}")
+                                        import traceback
+                                        traceback.print_exc()
+                        
+                        # Обрабатываем остаток буфера
+                        if text_buffer.strip():
+                            print(f"🔊 Финальный синтез: '{text_buffer[:30]}...'")
+                            try:
+                                chunk_count = 0
+                                async for audio_chunk in tts_module.synthesize_stream(text_buffer, language="ru"):
+                                    chunk_count += 1
+                                    audio_base64 = base64.b64encode(audio_chunk).decode('utf-8')
+                                    print(f"📦 Отправка финального аудио чанка #{chunk_count}, размер: {len(audio_base64)} символов")
+                                    await websocket.send_json({
+                                        "type": "audio_chunk",
+                                        "data": audio_base64
+                                    })
+                                print(f"✅ Финальный синтез завершен, отправлено {chunk_count} чанков")
+                            except Exception as tts_error:
+                                print(f"⚠️ Ошибка финального TTS: {tts_error}")
+                                import traceback
+                                traceback.print_exc()
+                        
+                        # Очищаем полный ответ от markdown форматирования перед сохранением
+                        if full_response:
+                            cleaned_full_response = clean_text_from_markdown(full_response)
+                            state.add_to_history("assistant", cleaned_full_response)
+                            print(f"💬 Полный ответ AI: {cleaned_full_response}")
+                        else:
+                            cleaned_full_response = ""
+                        
+                        # Отправляем конец потока
+                        await websocket.send_json({
+                            "type": "stream_end",
+                            "text": cleaned_full_response
                         })
                     else:
                         print("⚠️ Пустой финальный текст, игнорируем")
@@ -388,18 +555,26 @@ async def websocket_voice_endpoint(websocket: WebSocket):
 
             elif message_type == "speaking_finished":
                 # Воспроизведение ответа завершено, возвращаемся к прослушиванию
-                print("🔄 Получено speaking_finished, возврат к прослушиванию...")
+                print("🔄 Получено speaking_finished, текущее состояние:", state.current_state.value)
+                print("🔄 Возврат к прослушиванию...")
+                
+                # Проверяем что мы в состоянии speaking
+                if state.current_state != DialogState.SPEAKING:
+                    print(f"⚠️ Предупреждение: speaking_finished получен в состоянии {state.current_state.value}, но продолжаем...")
+                
                 state.start_listening()
 
                 # ВАЖНО: Создаем НОВЫЙ recognizer для новой фразы
                 recognizer = streaming_stt_module.create_recognizer()
                 last_transcript = ""
                 print("✅ Новый recognizer создан, готов к следующей фразе")
+                print(f"✅ Состояние изменено на: {state.current_state.value}")
 
                 await websocket.send_json({
                     "type": "state",
                     "state": "listening"
                 })
+                print("✅ Отправлено состояние 'listening' клиенту")
 
             elif message_type == "interrupt":
                 # Прерывание воспроизведения
