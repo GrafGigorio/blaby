@@ -1,2 +1,73 @@
 Answer in Russian
 
+## MCP Tools Usage
+
+### Context7 (Library Documentation)
+**Purpose:** Получение актуальной документации библиотек и фреймворков.
+
+**Когда использовать:**
+- Нужна документация по FastAPI, Whisper, Ollama, Edge TTS
+- Проверка новых функций и best practices
+- Решение проблем совместимости версий
+
+**Workflow:**
+1. Сначала вызывай `mcp_context7_resolve-library-id` чтобы найти правильный ID библиотеки
+2. Затем вызывай `mcp_context7_get-library-docs` для получения документации
+3. Используй параметр `topic` для фокусировки на конкретной теме
+
+**Example:**
+```
+# Получить документацию по FastAPI WebSocket
+mcp_context7_resolve-library-id: "fastapi"
+mcp_context7_get-library-docs: context7CompatibleLibraryID="/fastapi/fastapi", topic="websockets"
+```
+
+### Playwright (Browser Automation)
+**Purpose:** Автоматизация тестирования веб-интерфейса и отладка frontend.
+
+**Когда использовать:**
+- Тестирование веб-интерфейса (static/index.html)
+- Проверка функциональности записи голоса
+- Создание скриншотов для документации
+- Отладка browser-specific проблем
+- Автоматизированное end-to-end тестирование
+
+**Workflow:**
+1. Используй `mcp_cursor-browser-extension_browser_navigate` для открытия приложения
+2. Используй `mcp_cursor-browser-extension_browser_snapshot` для анализа страницы
+3. Используй `mcp_cursor-browser-extension_browser_take_screenshot` для создания скриншотов
+4. Используй `mcp_cursor-browser-extension_browser_click` и `browser_type` для взаимодействия
+5. Используй `mcp_cursor-browser-extension_browser_console_messages` для отладки ошибок
+
+**Example flow:**
+```
+# 1. Открыть приложение
+mcp_cursor-browser-extension_browser_navigate: url="http://localhost:8000"
+
+# 2. Сделать snapshot страницы
+mcp_cursor-browser-extension_browser_snapshot
+
+# 3. Сделать скриншот
+mcp_cursor-browser-extension_browser_take_screenshot: filename="app_loaded.png"
+
+# 4. Кликнуть по кнопке микрофона
+mcp_cursor-browser-extension_browser_click: element="кнопка микрофона", ref="[CSS selector]"
+
+# 5. Проверить console logs
+mcp_cursor-browser-extension_browser_console_messages
+```
+
+### Image Descriptions
+**Purpose:** Все скриншоты должны иметь подробное описание того, что на них показано.
+
+**Когда создавать описания:**
+- После каждого `browser_take_screenshot` добавляй описание в ответ
+- Описывай видимые элементы UI, состояние индикаторов
+- Указывай проблемы или аномалии, если они есть
+- Для скриншотов ошибок описывай визуальные признаки проблемы
+
+**Format:**
+```
+**Скриншот: [filename]**
+Описание состояния интерфейса, активные элементы, визуальные индикаторы и обнаруженные проблемы.
+```
