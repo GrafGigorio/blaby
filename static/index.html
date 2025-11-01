@@ -1,0 +1,827 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voice AI Assistant - Streaming</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            padding: 40px;
+            max-width: 700px;
+            width: 100%;
+        }
+
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 2em;
+        }
+
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 0.9em;
+        }
+
+        .status {
+            text-align: center;
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            font-weight: 500;
+            transition: all 0.3s ease;
+        }
+
+        .status.idle {
+            background: #e3f2fd;
+            color: #1976d2;
+        }
+
+        .status.listening {
+            background: #fff3e0;
+            color: #e65100;
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        .status.processing {
+            background: #f3e5f5;
+            color: #7b1fa2;
+        }
+
+        .status.speaking {
+            background: #e8f5e9;
+            color: #2e7d32;
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+
+        .controls {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        button {
+            padding: 15px 30px;
+            font-size: 16px;
+            font-weight: 600;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        button:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+        }
+
+        button:active:not(:disabled) {
+            transform: translateY(0);
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .start-btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            min-width: 200px;
+        }
+
+        .start-btn.active {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        }
+
+        .stop-btn {
+            background: #f44336;
+            color: white;
+        }
+
+        /* Промежуточный текст */
+        .partial-container {
+            background: #f5f5f5;
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 20px;
+            min-height: 60px;
+            display: none;
+        }
+
+        .partial-container.visible {
+            display: block;
+        }
+
+        .partial-label {
+            font-size: 12px;
+            color: #666;
+            margin-bottom: 5px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .partial-text {
+            font-size: 16px;
+            color: #333;
+            font-style: italic;
+        }
+
+        /* Эквалайзер */
+        .visualizer-container {
+            margin-bottom: 20px;
+            display: none;
+        }
+
+        .visualizer-container.visible {
+            display: block;
+        }
+
+        #visualizer {
+            width: 100%;
+            height: 80px;
+            background: #f5f5f5;
+            border-radius: 10px;
+        }
+
+        .volume-indicator {
+            text-align: center;
+            margin-top: 10px;
+            font-size: 14px;
+            color: #666;
+        }
+
+        /* История диалога */
+        .conversation {
+            max-height: 400px;
+            overflow-y: auto;
+            padding: 20px;
+            background: #f5f5f5;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+
+        .message {
+            margin-bottom: 20px;
+            padding: 15px;
+            border-radius: 10px;
+            animation: slideIn 0.3s ease;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .message.user {
+            background: #e3f2fd;
+            border-left: 4px solid #2196f3;
+        }
+
+        .message.assistant {
+            background: #f3e5f5;
+            border-left: 4px solid #9c27b0;
+        }
+
+        .message-label {
+            font-weight: bold;
+            margin-bottom: 8px;
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .message.user .message-label {
+            color: #1976d2;
+        }
+
+        .message.assistant .message-label {
+            color: #7b1fa2;
+        }
+
+        .message-text {
+            color: #333;
+            line-height: 1.6;
+        }
+
+        .audio-player {
+            margin-top: 10px;
+            width: 100%;
+        }
+
+        audio {
+            width: 100%;
+            height: 40px;
+        }
+
+        .empty-state {
+            text-align: center;
+            color: #999;
+            padding: 40px;
+            font-style: italic;
+        }
+
+        .info {
+            background: #fff3cd;
+            border: 1px solid #ffc107;
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 20px;
+            font-size: 14px;
+            color: #856404;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎤 Голосовой Ассистент</h1>
+        <div class="subtitle">Потоковое распознавание • Непрерывный диалог</div>
+
+        <div id="status" class="status idle">
+            Готов к работе
+        </div>
+
+        <div class="info">
+            💡 Нажмите "Начать диалог" и просто говорите. Ассистент автоматически определит конец фразы и ответит. После ответа диалог продолжится автоматически.
+        </div>
+
+        <div class="controls">
+            <button id="startBtn" onclick="startDialog()" class="start-btn">
+                🎙️ Начать диалог
+            </button>
+            <button id="stopBtn" onclick="stopDialog()" class="stop-btn" style="display: none;">
+                ⏹️ Остановить
+            </button>
+        </div>
+
+        <!-- Промежуточный текст -->
+        <div id="partialContainer" class="partial-container">
+            <div class="partial-label">Распознаётся...</div>
+            <div id="partialText" class="partial-text"></div>
+        </div>
+
+        <!-- Эквалайзер -->
+        <div id="visualizerContainer" class="visualizer-container">
+            <canvas id="visualizer" width="620" height="80"></canvas>
+            <div class="volume-indicator">
+                Уровень звука: <span id="volumeLevel">0</span>%
+            </div>
+        </div>
+
+        <div id="conversation" class="conversation">
+            <div class="empty-state">
+                Начните диалог, чтобы увидеть историю разговора...
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Глобальные переменные
+        let ws = null;
+        let mediaStream = null;
+        let audioContext = null;
+        let analyser = null;
+        let dataArray = null;
+        let animationId = null;
+        let audioProcessor = null;
+        let audioSourceNode = null;
+        let isDialogActive = false;
+        let currentState = 'idle';
+
+        // Простой VAD на основе громкости
+        let isSpeaking = false;
+        let silenceStart = null;
+        let speechStart = null;
+        let vadCheckInterval = null;
+        const SPEECH_THRESHOLD = 15; // Порог громкости для детекции речи (%)
+        const SILENCE_DURATION = 500; // Миллисекунды тишины для завершения фразы (0.5 сек)
+        const MIN_SPEECH_DURATION = 300; // Минимальная длительность речи
+
+        const statusDiv = document.getElementById('status');
+        const conversationDiv = document.getElementById('conversation');
+        const partialContainer = document.getElementById('partialContainer');
+        const partialText = document.getElementById('partialText');
+        const visualizerContainer = document.getElementById('visualizerContainer');
+        const volumeLevel = document.getElementById('volumeLevel');
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+
+        // Обновление статуса
+        function updateStatus(text, state) {
+            statusDiv.textContent = text;
+            statusDiv.className = `status ${state}`;
+            currentState = state;
+        }
+
+        // Визуализатор звука
+        function setupVisualizer(stream) {
+            // Создаем AudioContext с частотой 16kHz для совместимости с Vosk
+            audioContext = new (window.AudioContext || window.webkitAudioContext)({
+                sampleRate: 16000
+            });
+            analyser = audioContext.createAnalyser();
+            audioSourceNode = audioContext.createMediaStreamSource(stream);
+            audioSourceNode.connect(analyser);
+            analyser.fftSize = 256;
+
+            const bufferLength = analyser.frequencyBinCount;
+            dataArray = new Uint8Array(bufferLength);
+
+            console.log('✅ AudioContext создан с частотой:', audioContext.sampleRate, 'Hz');
+
+            visualizerContainer.classList.add('visible');
+            drawVisualizer();
+        }
+
+        function drawVisualizer() {
+            if (!isDialogActive || !analyser) return;
+
+            animationId = requestAnimationFrame(drawVisualizer);
+            analyser.getByteFrequencyData(dataArray);
+
+            const canvas = document.getElementById('visualizer');
+            const canvasCtx = canvas.getContext('2d');
+            const WIDTH = canvas.width;
+            const HEIGHT = canvas.height;
+
+            canvasCtx.fillStyle = 'rgb(245, 245, 245)';
+            canvasCtx.fillRect(0, 0, WIDTH, HEIGHT);
+
+            const barWidth = (WIDTH / dataArray.length) * 2.5;
+            let x = 0;
+
+            // Вычисляем средний уровень
+            let sum = 0;
+            for (let i = 0; i < dataArray.length; i++) {
+                sum += dataArray[i];
+            }
+            const average = sum / dataArray.length;
+            const volumePercent = Math.round((average / 255) * 100);
+            volumeLevel.textContent = volumePercent;
+
+            // Рисуем столбцы
+            for (let i = 0; i < dataArray.length; i++) {
+                const barHeight = (dataArray[i] / 255) * HEIGHT;
+                const gradient = canvasCtx.createLinearGradient(0, HEIGHT - barHeight, 0, HEIGHT);
+                gradient.addColorStop(0, '#667eea');
+                gradient.addColorStop(1, '#764ba2');
+                canvasCtx.fillStyle = gradient;
+                canvasCtx.fillRect(x, HEIGHT - barHeight, barWidth, barHeight);
+                x += barWidth + 1;
+            }
+        }
+
+        function stopVisualizer() {
+            if (animationId) {
+                cancelAnimationFrame(animationId);
+                animationId = null;
+            }
+            if (audioContext) {
+                audioContext.close();
+                audioContext = null;
+            }
+            visualizerContainer.classList.remove('visible');
+            volumeLevel.textContent = '0';
+        }
+
+        // WebSocket подключение
+        function connectWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/ws/voice`;
+
+            ws = new WebSocket(wsUrl);
+
+            ws.onopen = () => {
+                console.log('✅ WebSocket подключен');
+                ws.send(JSON.stringify({ type: 'start_listening' }));
+            };
+
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                console.log('📨 Получено:', data);
+
+                switch (data.type) {
+                    case 'state':
+                        handleStateChange(data.state);
+                        break;
+                    case 'partial_transcript':
+                        showPartialTranscript(data.text);
+                        break;
+                    case 'final_transcript':
+                        addMessage('user', data.text);
+                        hidePartialTranscript();
+                        break;
+                    case 'ai_response':
+                        addMessage('assistant', data.text, data.audio_url);
+                        break;
+                    case 'error':
+                        console.error('❌ Ошибка:', data.message);
+                        updateStatus('❌ Ошибка: ' + data.message, 'idle');
+                        break;
+                }
+            };
+
+            ws.onerror = (error) => {
+                console.error('❌ WebSocket ошибка:', error);
+                updateStatus('❌ Ошибка подключения', 'idle');
+            };
+
+            ws.onclose = () => {
+                console.log('👋 WebSocket отключен');
+                if (isDialogActive) {
+                    updateStatus('❌ Соединение потеряно', 'idle');
+                    stopDialog();
+                }
+            };
+        }
+
+        // Обработка изменения состояния
+        function handleStateChange(state) {
+            switch (state) {
+                case 'listening':
+                    console.log('📡 Состояние: LISTENING');
+                    updateStatus('🎧 Слушаю... Говорите!', 'listening');
+                    // Возобновляем VAD и запись
+                    if (!vadCheckInterval) {
+                        vadCheckInterval = setInterval(checkVoiceActivity, 100);
+                        console.log('✅ VAD активирован');
+                    }
+                    break;
+                case 'processing':
+                    console.log('📡 Состояние: PROCESSING');
+                    updateStatus('⏳ Обрабатываю запрос...', 'processing');
+                    // Останавливаем VAD и запись на время обработки
+                    if (vadCheckInterval) {
+                        clearInterval(vadCheckInterval);
+                        vadCheckInterval = null;
+                        console.log('⏸️ VAD приостановлен (обработка)');
+                    }
+                    stopAudioRecording();
+                    break;
+                case 'speaking':
+                    console.log('📡 Состояние: SPEAKING');
+                    updateStatus('🔊 Отвечаю...', 'speaking');
+                    // Останавливаем VAD и запись на время воспроизведения
+                    if (vadCheckInterval) {
+                        clearInterval(vadCheckInterval);
+                        vadCheckInterval = null;
+                        console.log('⏸️ VAD приостановлен (воспроизведение)');
+                    }
+                    stopAudioRecording();
+                    break;
+            }
+        }
+
+        // Отображение промежуточного текста
+        function showPartialTranscript(text) {
+            if (text) {
+                partialContainer.classList.add('visible');
+                partialText.textContent = text;
+            }
+        }
+
+        function hidePartialTranscript() {
+            partialContainer.classList.remove('visible');
+            partialText.textContent = '';
+        }
+
+        // Добавление сообщения в историю
+        function addMessage(role, text, audioUrl = null) {
+            const emptyState = conversationDiv.querySelector('.empty-state');
+            if (emptyState) emptyState.remove();
+
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${role}`;
+
+            let content = `
+                <div class="message-label">
+                    ${role === 'user' ? '👤 Вы' : '🤖 Ассистент'}
+                </div>
+                <div class="message-text">${text}</div>
+            `;
+
+            if (audioUrl) {
+                content += `
+                    <div class="audio-player">
+                        <audio id="response-audio" controls>
+                            <source src="${audioUrl}" type="audio/wav">
+                        </audio>
+                    </div>
+                `;
+            }
+
+            messageDiv.innerHTML = content;
+            conversationDiv.appendChild(messageDiv);
+            conversationDiv.scrollTop = conversationDiv.scrollHeight;
+
+            // Автовоспроизведение ответа
+            if (role === 'assistant' && audioUrl) {
+                const audioElement = messageDiv.querySelector('audio');
+                audioElement.addEventListener('ended', () => {
+                    console.log('🔄 Ответ воспроизведен, отправка speaking_finished');
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                        console.log('📤 Отправка speaking_finished на сервер');
+                        ws.send(JSON.stringify({ type: 'speaking_finished' }));
+                    } else {
+                        console.error('❌ WebSocket не готов для отправки speaking_finished');
+                    }
+                }, { once: true });
+
+                // Детекция прерывания
+                audioElement.addEventListener('play', () => {
+                    console.log('▶️ Начато воспроизведение ответа');
+                    startInterruptionDetection(audioElement);
+                });
+
+                // Автовоспроизведение с задержкой для загрузки
+                console.log('🎵 Попытка автовоспроизведения аудио:', audioUrl);
+
+                // Добавляем event listeners для диагностики
+                audioElement.addEventListener('error', (e) => {
+                    console.error('❌ Ошибка загрузки аудио:', e, audioElement.error);
+                });
+
+                audioElement.addEventListener('loadeddata', () => {
+                    console.log('📥 Аудио загружено, длительность:', audioElement.duration, 'сек');
+                });
+
+                setTimeout(() => {
+                    const playPromise = audioElement.play();
+                    if (playPromise !== undefined) {
+                        playPromise
+                            .then(() => {
+                                console.log('✅ Автовоспроизведение запущено успешно');
+                            })
+                            .catch(error => {
+                                console.error('❌ Автовоспроизведение заблокировано:', error.message);
+                                console.log('ℹ️ Нажмите кнопку play вручную');
+                            });
+                    }
+                }, 100);
+            }
+        }
+
+        // Детекция прерывания во время воспроизведения
+        function startInterruptionDetection(audioElement) {
+            const checkForSpeech = () => {
+                // Если детектирована речь во время воспроизведения
+                if (currentState === 'speaking' && isSpeaking) {
+                    console.log('⚠️ Детектировано прерывание!');
+                    audioElement.pause();
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                        ws.send(JSON.stringify({ type: 'interrupt' }));
+                    }
+                }
+            };
+
+            // Проверяем каждые 100мс
+            const intervalId = setInterval(checkForSpeech, 100);
+
+            audioElement.addEventListener('ended', () => {
+                clearInterval(intervalId);
+            }, { once: true });
+        }
+
+        // Простой VAD на основе громкости
+        function checkVoiceActivity() {
+            if (!analyser || !isDialogActive) return;
+
+            analyser.getByteFrequencyData(dataArray);
+
+            // Вычисляем средний уровень
+            let sum = 0;
+            for (let i = 0; i < dataArray.length; i++) {
+                sum += dataArray[i];
+            }
+            const average = sum / dataArray.length;
+            const volumePercent = Math.round((average / 255) * 100);
+
+            const now = Date.now();
+
+            if (volumePercent > SPEECH_THRESHOLD) {
+                // Детектирована речь
+                if (!isSpeaking) {
+                    console.log('🎤 Начало речи (громкость:', volumePercent, '%)');
+                    isSpeaking = true;
+                    speechStart = now;
+                    silenceStart = null;
+                    startAudioRecording();
+                } else {
+                    // Речь продолжается - сбрасываем таймер тишины
+                    silenceStart = null;
+                }
+            } else {
+                // Тишина
+                if (isSpeaking) {
+                    if (!silenceStart) {
+                        silenceStart = now;
+                        console.log('🔇 Началась тишина');
+                    } else {
+                        const silenceDuration = now - silenceStart;
+                        const speechDuration = silenceStart - speechStart;
+
+                        // Если тишина длится достаточно долго и речь была достаточно долгой
+                        if (silenceDuration >= SILENCE_DURATION && speechDuration >= MIN_SPEECH_DURATION) {
+                            console.log('✅ Конец фразы (речь:', speechDuration, 'мс, тишина:', silenceDuration, 'мс)');
+                            isSpeaking = false;
+                            silenceStart = null;
+                            speechStart = null;
+
+                            stopAudioRecording();
+                            if (ws && ws.readyState === WebSocket.OPEN) {
+                                ws.send(JSON.stringify({ type: 'speech_end' }));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Настройка аудио захвата
+        async function setupAudioCapture() {
+            try {
+                mediaStream = await navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true,
+                        sampleRate: 16000
+                    }
+                });
+
+                // Визуализатор (также используется для VAD)
+                setupVisualizer(mediaStream);
+
+                // Запускаем проверку голосовой активности каждые 100мс
+                vadCheckInterval = setInterval(checkVoiceActivity, 100);
+                console.log('✅ VAD запущен (на основе громкости)');
+
+            } catch (error) {
+                console.error('❌ Ошибка доступа к микрофону:', error);
+                alert('Не удалось получить доступ к микрофону: ' + error.message);
+                throw error;
+            }
+        }
+
+        // Запись аудио для отправки на сервер (RAW PCM для Vosk)
+        function startAudioRecording() {
+            if (!audioContext || !audioSourceNode) return;
+
+            // Создаем ScriptProcessorNode для захвата raw PCM audio
+            audioProcessor = audioContext.createScriptProcessor(4096, 1, 1);
+
+            audioProcessor.onaudioprocess = (event) => {
+                const inputData = event.inputBuffer.getChannelData(0);
+                sendPCMAudioChunk(inputData);
+            };
+
+            // Подключаем существующий источник к процессору
+            audioSourceNode.connect(audioProcessor);
+            audioProcessor.connect(audioContext.destination);
+            console.log('🎙️ Начата запись PCM аудио');
+        }
+
+        function stopAudioRecording() {
+            if (audioProcessor) {
+                audioProcessor.disconnect();
+                audioProcessor = null;
+                console.log('⏹️ Запись PCM остановлена');
+            }
+            // Сбрасываем VAD переменные
+            isSpeaking = false;
+            silenceStart = null;
+            speechStart = null;
+        }
+
+        // Конвертация Float32Array в Int16Array и отправка
+        function sendPCMAudioChunk(float32Array) {
+            if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+            // Конвертируем Float32 [-1.0, 1.0] в Int16 [-32768, 32767]
+            const int16Array = new Int16Array(float32Array.length);
+            for (let i = 0; i < float32Array.length; i++) {
+                const s = Math.max(-1, Math.min(1, float32Array[i]));
+                int16Array[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+            }
+
+            // Конвертируем в base64 для отправки
+            const bytes = new Uint8Array(int16Array.buffer);
+            const base64Audio = btoa(String.fromCharCode.apply(null, bytes));
+
+            ws.send(JSON.stringify({
+                type: 'audio_chunk',
+                data: base64Audio
+            }));
+        }
+
+        // Запуск диалога
+        async function startDialog() {
+            if (isDialogActive) return;
+
+            try {
+                isDialogActive = true;
+                startBtn.style.display = 'none';
+                stopBtn.style.display = 'inline-block';
+
+                updateStatus('🔄 Подключение...', 'idle');
+
+                // Настройка аудио
+                await setupAudioCapture();
+
+                // Подключение WebSocket
+                connectWebSocket();
+
+                updateStatus('🎧 Слушаю... Говорите!', 'listening');
+
+            } catch (error) {
+                console.error('❌ Ошибка запуска:', error);
+                stopDialog();
+            }
+        }
+
+        // Остановка диалога
+        function stopDialog() {
+            isDialogActive = false;
+            startBtn.style.display = 'inline-block';
+            stopBtn.style.display = 'none';
+
+            if (ws) {
+                ws.send(JSON.stringify({ type: 'stop' }));
+                ws.close();
+                ws = null;
+            }
+
+            if (vadCheckInterval) {
+                clearInterval(vadCheckInterval);
+                vadCheckInterval = null;
+            }
+
+            if (audioProcessor) {
+                audioProcessor.disconnect();
+                audioProcessor = null;
+            }
+
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(track => track.stop());
+                mediaStream = null;
+            }
+
+            // Сброс VAD переменных
+            isSpeaking = false;
+            silenceStart = null;
+            speechStart = null;
+
+            stopVisualizer();
+            hidePartialTranscript();
+            updateStatus('✅ Готов к работе', 'idle');
+        }
+
+        // Горячая клавиша: Space
+        document.addEventListener('keydown', (e) => {
+            if (e.code === 'Space' && e.target === document.body) {
+                e.preventDefault();
+                if (!isDialogActive) {
+                    startDialog();
+                } else {
+                    stopDialog();
+                }
+            }
+        });
+    </script>
+</body>
+</html>

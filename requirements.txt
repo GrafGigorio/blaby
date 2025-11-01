@@ -1,0 +1,13 @@
+fastapi==0.115.5
+uvicorn[standard]==0.32.1
+python-multipart==0.0.19
+git+https://github.com/openai/whisper.git
+edge-tts
+ollama==0.4.4
+numpy<2.0
+torch
+soundfile
+pydantic==2.10.3
+webrtcvad==2.0.10
+pyaudio
+vosk==0.3.44
