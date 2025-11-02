@@ -425,6 +425,8 @@
         let isPlayingAudio = false;
         let audioContextForPlayback = null;
         let currentAudioElements = []; // Массив активных audio элементов для остановки
+        let processAudioChunksPromise = null; // Promise текущего процесса воспроизведения (для предотвращения параллельных вызовов)
+        let currentPlayingElement = null; // Текущий воспроизводимый audio элемент (для строго последовательного воспроизведения)
 
         // Простой VAD на основе громкости
         let isSpeaking = false;
@@ -690,9 +692,14 @@
                         console.log('⏹️ Остановка воспроизведений при переходе в listening...');
                         currentAudioElements.forEach((audioEl) => {
                             try {
-                                audioEl.pause();
+                                // Сначала останавливаем воспроизведение
+                                if (!audioEl.paused) {
+                                    audioEl.pause();
+                                }
                                 audioEl.currentTime = 0;
+                                // Очищаем src только после полной остановки
                                 audioEl.src = '';
+                                audioEl.load(); // Перезагружаем элемент
                             } catch (e) {
                                 console.error('❌ Ошибка остановки audio:', e);
                             }
@@ -700,6 +707,16 @@
                         currentAudioElements = [];
                         isPlayingAudio = false;
                         currentAudioChunks = [];
+                        processAudioChunksPromise = null; // Сбрасываем Promise
+                        // Останавливаем текущий элемент если есть
+                        if (currentPlayingElement) {
+                            try {
+                                currentPlayingElement.pause();
+                                currentPlayingElement.src = '';
+                                currentPlayingElement.load();
+                            } catch (e) { }
+                            currentPlayingElement = null;
+                        }
                     }
 
                     // Возобновляем VAD и запись
@@ -783,6 +800,7 @@
             currentStreamingText = '';
             currentAudioChunks = [];
             isPlayingAudio = false;
+            currentPlayingElement = null; // Сбрасываем текущий элемент при начале нового потока
         }
 
         // Обработка текстового чанка
@@ -816,10 +834,13 @@
                 currentAudioChunks.push(bytes);
                 console.log('📦 Всего чанков в буфере:', currentAudioChunks.length);
 
-                // Пытаемся воспроизвести если еще не воспроизводим
-                if (!isPlayingAudio) {
+                // Пытаемся воспроизвести если еще не воспроизводим и нет активного процесса
+                if (!isPlayingAudio && !processAudioChunksPromise) {
                     console.log('🎵 Запуск воспроизведения...');
-                    processAudioChunks();
+                    processAudioChunksPromise = processAudioChunks();
+                    processAudioChunksPromise.finally(() => {
+                        processAudioChunksPromise = null;
+                    });
                 }
             } catch (error) {
                 console.error('❌ Ошибка обработки аудио чанка:', error);
@@ -828,12 +849,13 @@
 
         // Обработка и воспроизведение накопленных аудио чанков
         async function processAudioChunks() {
-            if (isPlayingAudio) {
-                console.log('⏸️ Уже воспроизводится, пропускаем');
-                return;
+            // Защита от параллельных вызовов
+            if (processAudioChunksPromise) {
+                console.log('⏸️ Уже обрабатываются чанки, пропускаем');
+                return processAudioChunksPromise;
             }
 
-            if (currentAudioChunks.length === 0) {
+            if (currentAudioChunks.length === 0 && !isPlayingAudio) {
                 console.log('📭 Нет чанков для воспроизведения');
                 return;
             }
@@ -861,25 +883,34 @@
                 }
             }, 200); // Проверяем каждые 200мс
 
-            // Воспроизводим чанки из очереди
+            // Воспроизводим чанки из очереди СТРОГО ПОСЛЕДОВАТЕЛЬНО
             while ((playbackQueue.length > 0 || currentAudioChunks.length > 0) && isDialogActive) {
                 // Проверяем что диалог еще активен
                 if (!isDialogActive) {
                     console.log('⏹️ Диалог остановлен, прекращаем воспроизведение');
                     clearInterval(checkInterval);
                     isPlayingAudio = false;
+                    // Очищаем текущий элемент
+                    if (currentPlayingElement) {
+                        try {
+                            currentPlayingElement.pause();
+                            currentPlayingElement.src = '';
+                            currentPlayingElement.load();
+                        } catch (e) { }
+                        currentPlayingElement = null;
+                    }
                     return;
                 }
 
-                // Ждем пока в очереди будут чанки
-                if (playbackQueue.length === 0) {
+                // Ждем пока в очереди будут чанки И предыдущий элемент завершился
+                if (playbackQueue.length === 0 || currentPlayingElement) {
                     await new Promise(resolve => setTimeout(resolve, 100));
                     continue;
                 }
 
                 try {
                     // Берем чанки для воспроизведения (накапливаем несколько для более плавного воспроизведения)
-                    const chunksToPlay = playbackQueue.splice(0, playbackQueue.length);
+                    const chunksToPlay = playbackQueue.splice(0, Math.min(playbackQueue.length, 10)); // Берем максимум 10 чанков за раз
 
                     if (chunksToPlay.length === 0) continue;
 
@@ -949,43 +980,65 @@
                         console.log('ℹ️ MediaElementSource уже создан для этого элемента, пропускаем');
                     }
 
+                    // Устанавливаем текущий воспроизводимый элемент
+                    currentPlayingElement = audioElement;
+
                     // Добавляем в массив для возможности остановки
                     currentAudioElements.push(audioElement);
 
                     // Удаляем из массива когда завершится
                     audioElement.addEventListener('ended', () => {
+                        // Очищаем текущий элемент только если это он
+                        if (currentPlayingElement === audioElement) {
+                            currentPlayingElement = null;
+                        }
                         const index = currentAudioElements.indexOf(audioElement);
                         if (index > -1) {
                             currentAudioElements.splice(index, 1);
                         }
                     });
 
-                    // Добавляем обработчики ошибок
-                    audioElement.addEventListener('error', (e) => {
+                    // Функция проверки пустого src
+                    const isSrcEmpty = (el) => {
+                        if (!el.src || el.src === '' || el.src === window.location.href) {
+                            return true;
+                        }
+                        // Проверяем что src не является blob URL (blob URLs валидны)
+                        // Если src не начинается с blob:, но также не является пустым - это может быть ошибка
+                        // Однако мы проверяем только пустые случаи
+                        return false;
+                    };
+
+                    // Добавляем обработчики ошибок (игнорируем ошибки если src уже очищен)
+                    const errorHandler = (e) => {
+                        // Игнорируем ошибки с пустым src (это нормально при остановке)
+                        const srcEmpty = isSrcEmpty(audioElement);
+                        if (srcEmpty || audioElement.error?.code === 4) {
+                            // Код 4 = MEDIA_ERR_SRC_NOT_SUPPORTED = Empty src attribute
+                            if (currentPlayingElement === audioElement) {
+                                currentPlayingElement = null;
+                            }
+                            const index = currentAudioElements.indexOf(audioElement);
+                            if (index > -1) {
+                                currentAudioElements.splice(index, 1);
+                            }
+                            return;
+                        }
+
                         console.error('❌ Ошибка audio элемента:', e, audioElement.error);
                         if (audioElement.error) {
                             console.error('Код ошибки:', audioElement.error.code);
                             console.error('Сообщение:', audioElement.error.message);
-                            switch (audioElement.error.code) {
-                                case audioElement.error.MEDIA_ERR_ABORTED:
-                                    console.error('Воспроизведение было прервано');
-                                    break;
-                                case audioElement.error.MEDIA_ERR_NETWORK:
-                                    console.error('Ошибка сети');
-                                    break;
-                                case audioElement.error.MEDIA_ERR_DECODE:
-                                    console.error('Ошибка декодирования - возможно неправильный формат');
-                                    break;
-                                case audioElement.error.MEDIA_ERR_SRC_NOT_SUPPORTED:
-                                    console.error('Формат не поддерживается браузером');
-                                    break;
-                            }
+                        }
+                        if (currentPlayingElement === audioElement) {
+                            currentPlayingElement = null;
                         }
                         const index = currentAudioElements.indexOf(audioElement);
                         if (index > -1) {
                             currentAudioElements.splice(index, 1);
                         }
-                    });
+                    };
+                    audioElement.addEventListener('error', errorHandler);
 
                     // Воспроизводим и ждем окончания
                     try {
@@ -998,8 +1051,8 @@
                             return;
                         }
 
-                        // Проверяем готовность к воспроизведению
-                        if (audioElement.readyState < 2) {
+                        // Проверяем готовность к воспроизведению (только если src не пустой)
+                        if (!isSrcEmpty(audioElement) && audioElement.readyState < 2) {
                             console.log('⏳ Ожидание загрузки аудио... (readyState:', audioElement.readyState, ')');
                             await new Promise((resolve, reject) => {
                                 const timeout = setTimeout(() => {
@@ -1013,16 +1066,25 @@
                                 }, { once: true });
                                 audioElement.addEventListener('error', () => {
                                     clearTimeout(timeout);
+                                    // Игнорируем ошибки с пустым src (это нормально при остановке)
+                                    if (isSrcEmpty(audioElement) || audioElement.error?.code === 4) {
+                                        console.log('ℹ️ Ошибка загрузки с пустым src (игнорируем)');
+                                        resolve(); // Разрешаем вместо reject чтобы не прерывать цикл
+                                        return;
+                                    }
                                     console.error('❌ Ошибка при загрузке аудио:', audioElement.error);
-                                    reject(audioElement.error || new Error('Ошибка загрузки аудио'));
+                                    resolve(); // Разрешаем чтобы не прерывать цикл, просто пропустим этот элемент
                                 }, { once: true });
                             });
                         }
 
                         // Еще раз проверяем после await
-                        if (!isDialogActive) {
-                            console.log('⏹️ Диалог остановлен после загрузки, пропускаем воспроизведение');
+                        if (!isDialogActive || isSrcEmpty(audioElement)) {
+                            console.log('⏹️ Диалог остановлен или src очищен, пропускаем воспроизведение');
                             URL.revokeObjectURL(audioUrl);
+                            if (currentPlayingElement === audioElement) {
+                                currentPlayingElement = null;
+                            }
                             clearInterval(checkInterval);
                             isPlayingAudio = false;
                             return;
@@ -1049,6 +1111,10 @@
                                 clearTimeout(timeout);
                                 console.log('✅ Воспроизведение завершено');
                                 URL.revokeObjectURL(audioUrl);
+                                // Очищаем текущий элемент
+                                if (currentPlayingElement === audioElement) {
+                                    currentPlayingElement = null;
+                                }
                                 // Не останавливаем визуализатор при окончании одного элемента,
                                 // так как могут быть другие элементы в очереди
                                 resolve();
@@ -1056,8 +1122,17 @@
 
                             audioElement.onerror = (error) => {
                                 clearTimeout(timeout);
-                                console.error('❌ Ошибка воспроизведения:', error, audioElement.error);
+                                // Игнорируем ошибки с пустым src (это нормально при остановке)
+                                if (isSrcEmpty(audioElement) || audioElement.error?.code === 4) {
+                                    console.log('ℹ️ Ошибка воспроизведения с пустым src (игнорируем)');
+                                } else {
+                                    console.error('❌ Ошибка воспроизведения:', error, audioElement.error);
+                                }
                                 URL.revokeObjectURL(audioUrl);
+                                // Очищаем текущий элемент
+                                if (currentPlayingElement === audioElement) {
+                                    currentPlayingElement = null;
+                                }
                                 resolve();
                             };
                         });
@@ -1072,7 +1147,35 @@
             }
 
             clearInterval(checkInterval);
+
+            // Ждем завершения текущего элемента если он есть
+            if (currentPlayingElement) {
+                console.log('⏳ Ожидание завершения текущего воспроизведения...');
+                await new Promise((resolve) => {
+                    const timeout = setTimeout(() => {
+                        console.log('⏰ Таймаут ожидания текущего элемента');
+                        if (currentPlayingElement) {
+                            currentPlayingElement.pause();
+                            currentPlayingElement = null;
+                        }
+                        resolve();
+                    }, 5000);
+
+                    const checkEnded = () => {
+                        if (!currentPlayingElement || currentPlayingElement.ended || currentPlayingElement.paused) {
+                            clearTimeout(timeout);
+                            currentPlayingElement = null;
+                            resolve();
+                        } else {
+                            setTimeout(checkEnded, 100);
+                        }
+                    };
+                    checkEnded();
+                });
+            }
+
             isPlayingAudio = false;
+            currentPlayingElement = null;
             console.log('🏁 Воспроизведение всех чанков завершено');
         }
 
@@ -1094,13 +1197,16 @@
             const streamEnded = true;
 
             // Воспроизводим оставшиеся чанки только если еще не начали воспроизведение
-            if (!isPlayingAudio) {
+            if (!isPlayingAudio && !processAudioChunksPromise) {
                 if (currentAudioChunks.length > 0) {
-                    processAudioChunks().then(() => {
+                    processAudioChunksPromise = processAudioChunks();
+                    processAudioChunksPromise.then(() => {
                         console.log('✅ Все аудио чанки обработаны');
+                        processAudioChunksPromise = null;
                         sendSpeakingFinished();
                     }).catch((error) => {
                         console.error('❌ Ошибка при обработке аудио чанков:', error);
+                        processAudioChunksPromise = null;
                         sendSpeakingFinished();
                     });
                 } else {
@@ -1110,7 +1216,17 @@
             } else {
                 // Если воспроизведение уже идет, просто ждем его окончания
                 console.log('⏳ Ожидание окончания воспроизведения...');
-                sendSpeakingFinished();
+                if (processAudioChunksPromise) {
+                    processAudioChunksPromise.then(() => {
+                        processAudioChunksPromise = null;
+                        sendSpeakingFinished();
+                    }).catch(() => {
+                        processAudioChunksPromise = null;
+                        sendSpeakingFinished();
+                    });
+                } else {
+                    sendSpeakingFinished();
+                }
             }
 
             function sendSpeakingFinished() {
@@ -1325,9 +1441,14 @@
                             console.log('⏹️ Остановка всех воспроизведений при прерывании...');
                             currentAudioElements.forEach((audioEl) => {
                                 try {
-                                    audioEl.pause();
+                                    // Сначала останавливаем воспроизведение
+                                    if (!audioEl.paused) {
+                                        audioEl.pause();
+                                    }
                                     audioEl.currentTime = 0;
+                                    // Очищаем src только после полной остановки
                                     audioEl.src = '';
+                                    audioEl.load(); // Перезагружаем элемент
                                     console.log('⏹️ Остановлен streaming audio элемент');
                                 } catch (e) {
                                     console.error('❌ Ошибка остановки streaming audio:', e);
@@ -1338,8 +1459,11 @@
                             // Останавливаем все audio элементы на странице
                             document.querySelectorAll('audio').forEach((audioEl) => {
                                 try {
-                                    audioEl.pause();
+                                    if (!audioEl.paused) {
+                                        audioEl.pause();
+                                    }
                                     audioEl.currentTime = 0;
+                                    // Не очищаем src для элементов в DOM, только останавливаем
                                     console.log('⏹️ Остановлен audio элемент из DOM');
                                 } catch (e) {
                                     console.error('❌ Ошибка остановки audio из DOM:', e);
@@ -1351,6 +1475,16 @@
                             currentAudioChunks = [];
                             currentStreamingMessage = null;
                             currentStreamingText = '';
+                            processAudioChunksPromise = null; // Сбрасываем Promise
+                            // Останавливаем текущий элемент если есть
+                            if (currentPlayingElement) {
+                                try {
+                                    currentPlayingElement.pause();
+                                    currentPlayingElement.src = '';
+                                    currentPlayingElement.load();
+                                } catch (e) { }
+                                currentPlayingElement = null;
+                            }
 
                             // Отправляем interrupt на сервер
                             if (ws && ws.readyState === WebSocket.OPEN) {
@@ -1539,9 +1673,12 @@
                 // Останавливаем все аудио элементы
                 currentAudioElements.forEach((audioEl) => {
                     try {
-                        audioEl.pause();
+                        if (!audioEl.paused) {
+                            audioEl.pause();
+                        }
                         audioEl.currentTime = 0;
                         audioEl.src = '';
+                        audioEl.load(); // Перезагружаем элемент
                         audioEl.remove();
                     } catch (e) {
                         console.error('Ошибка очистки audio:', e);
@@ -1549,19 +1686,30 @@
                 });
                 currentAudioElements = [];
 
-                // Останавливаем все audio на странице
+                // Останавливаем все audio на странице (только останавливаем, не удаляем - они в DOM)
                 document.querySelectorAll('audio').forEach((audioEl) => {
                     try {
-                        audioEl.pause();
+                        if (!audioEl.paused) {
+                            audioEl.pause();
+                        }
                         audioEl.currentTime = 0;
-                        audioEl.src = '';
-                        audioEl.remove();
+                        // Не очищаем src для элементов в DOM
                     } catch (e) { }
                 });
 
                 // Очищаем буфер аудио чанков
                 currentAudioChunks = [];
                 isPlayingAudio = false;
+                processAudioChunksPromise = null; // Сбрасываем Promise
+                // Останавливаем текущий элемент если есть
+                if (currentPlayingElement) {
+                    try {
+                        currentPlayingElement.pause();
+                        currentPlayingElement.src = '';
+                        currentPlayingElement.load();
+                    } catch (e) { }
+                    currentPlayingElement = null;
+                }
 
                 // Останавливаем визуализаторы
                 stopPlaybackVisualizer();
@@ -1617,9 +1765,12 @@
             // Останавливаем все аудио элементы из массива
             currentAudioElements.forEach((audioEl) => {
                 try {
-                    audioEl.pause();
+                    if (!audioEl.paused) {
+                        audioEl.pause();
+                    }
                     audioEl.currentTime = 0;
                     audioEl.src = ''; // Очищаем источник
+                    audioEl.load(); // Перезагружаем элемент
                     console.log('⏹️ Остановлен audio элемент');
                 } catch (e) {
                     console.error('❌ Ошибка остановки audio:', e);
@@ -1630,8 +1781,11 @@
             // Останавливаем все audio элементы на странице (для надежности)
             document.querySelectorAll('audio').forEach((audioEl) => {
                 try {
-                    audioEl.pause();
+                    if (!audioEl.paused) {
+                        audioEl.pause();
+                    }
                     audioEl.currentTime = 0;
+                    // Не очищаем src для элементов в DOM, только останавливаем
                     console.log('⏹️ Остановлен audio элемент из DOM');
                 } catch (e) {
                     console.error('❌ Ошибка остановки audio из DOM:', e);
@@ -1641,6 +1795,16 @@
             // Очищаем флаги воспроизведения
             isPlayingAudio = false;
             currentAudioChunks = [];
+            processAudioChunksPromise = null; // Сбрасываем Promise
+            // Останавливаем текущий элемент если есть
+            if (currentPlayingElement) {
+                try {
+                    currentPlayingElement.pause();
+                    currentPlayingElement.src = '';
+                    currentPlayingElement.load();
+                } catch (e) { }
+                currentPlayingElement = null;
+            }
 
             // Сбрасываем потоковые данные
             currentStreamingMessage = null;
