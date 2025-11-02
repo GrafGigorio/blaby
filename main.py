@@ -492,8 +492,8 @@ async def websocket_voice_endpoint(websocket: WebSocket):
                                 })
                             
                             # Накопляем текст до предложения (до точки, восклицательного или вопросительного знака)
-                            # или до определенного размера (50 символов)
-                            if len(text_buffer) >= 50 or any(punct in text_buffer for punct in ['.', '!', '?', '。']):
+                            # или до определенного размера (100 символов вместо 50 для лучшего качества TTS)
+                            if len(text_buffer) >= 100 or any(punct in text_buffer for punct in ['.', '!', '?', '。']):
                                 # Находим границу предложения
                                 sentence_end = -1
                                 for punct in ['.', '!', '?', '。']:
@@ -505,9 +505,9 @@ async def websocket_voice_endpoint(websocket: WebSocket):
                                     sentence = text_buffer[:sentence_end + 1]
                                     text_buffer = text_buffer[sentence_end + 1:]
                                 else:
-                                    # Если не нашли предложение, берем первые 50 символов
-                                    sentence = text_buffer[:50]
-                                    text_buffer = text_buffer[50:]
+                                    # Если не нашли предложение, берем первые 100 символов
+                                    sentence = text_buffer[:100]
+                                    text_buffer = text_buffer[100:]
                                 
                                 # Синтезируем предложение в аудио
                                 if sentence.strip():
