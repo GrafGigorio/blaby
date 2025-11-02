@@ -519,10 +519,12 @@ async def websocket_voice_endpoint(websocket: WebSocket):
                                 
                                 # Синтезируем предложение в аудио
                                 if sentence.strip():
-                                    print(f"🔊 Синтез: '{sentence[:30]}...'")
+                                    # Очищаем текст от markdown и спецсимволов перед синтезом
+                                    cleaned_sentence = clean_text_from_markdown(sentence)
+                                    print(f"🔊 Синтез: '{cleaned_sentence[:30]}...' (было: '{sentence[:30]}...')")
                                     try:
                                         chunk_count = 0
-                                        async for audio_chunk in tts_module.synthesize_stream(sentence, language="ru"):
+                                        async for audio_chunk in tts_module.synthesize_stream(cleaned_sentence, language="ru"):
                                             chunk_count += 1
                                             # Отправляем аудио чанк клиенту (base64)
                                             audio_base64 = base64.b64encode(audio_chunk).decode('utf-8')
@@ -539,10 +541,12 @@ async def websocket_voice_endpoint(websocket: WebSocket):
                         
                         # Обрабатываем остаток буфера
                         if text_buffer.strip():
-                            print(f"🔊 Финальный синтез: '{text_buffer[:30]}...'")
+                            # Очищаем текст от markdown и спецсимволов перед синтезом
+                            cleaned_buffer = clean_text_from_markdown(text_buffer)
+                            print(f"🔊 Финальный синтез: '{cleaned_buffer[:30]}...' (было: '{text_buffer[:30]}...')")
                             try:
                                 chunk_count = 0
-                                async for audio_chunk in tts_module.synthesize_stream(text_buffer, language="ru"):
+                                async for audio_chunk in tts_module.synthesize_stream(cleaned_buffer, language="ru"):
                                     chunk_count += 1
                                     audio_base64 = base64.b64encode(audio_chunk).decode('utf-8')
                                     print(f"📦 Отправка финального аудио чанка #{chunk_count}, размер: {len(audio_base64)} символов")
