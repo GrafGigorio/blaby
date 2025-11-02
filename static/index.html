@@ -1093,15 +1093,20 @@
             // Устанавливаем флаг что поток завершен
             const streamEnded = true;
 
-            // Воспроизводим оставшиеся чанки если есть или если еще не начали воспроизведение
-            if (currentAudioChunks.length > 0 || !isPlayingAudio) {
-                processAudioChunks().then(() => {
-                    console.log('✅ Все аудио чанки обработаны');
+            // Воспроизводим оставшиеся чанки только если еще не начали воспроизведение
+            if (!isPlayingAudio) {
+                if (currentAudioChunks.length > 0) {
+                    processAudioChunks().then(() => {
+                        console.log('✅ Все аудио чанки обработаны');
+                        sendSpeakingFinished();
+                    }).catch((error) => {
+                        console.error('❌ Ошибка при обработке аудио чанков:', error);
+                        sendSpeakingFinished();
+                    });
+                } else {
+                    console.log('📭 Нет чанков для воспроизведения');
                     sendSpeakingFinished();
-                }).catch((error) => {
-                    console.error('❌ Ошибка при обработке аудио чанков:', error);
-                    sendSpeakingFinished();
-                });
+                }
             } else {
                 // Если воспроизведение уже идет, просто ждем его окончания
                 console.log('⏳ Ожидание окончания воспроизведения...');
