@@ -52,28 +52,35 @@ class TTSModule:
     async def synthesize_stream(self, text: str, language: str = "ru"):
         """
         Потоковый синтез речи из текста (асинхронный генератор)
-        
+
         Args:
             text: текст для озвучивания
             language: язык синтеза
-            
+
         Yields:
-            bytes: чанки аудио данных
+            bytes: чанки аудио данных в формате MP3 (совместимо с Safari)
         """
         try:
             # Выбираем голос в зависимости от языка
             voice = self.voice
             if language == "en":
                 voice = "en-US-JennyNeural"
-            
-            # Создаем Communicate объект и получаем поток аудио
-            communicate = edge_tts.Communicate(text, voice)
-            
+
+            # Создаем Communicate объект с MP3 форматом для совместимости с Safari
+            # audio-24khz-48kbitrate-mono-mp3 - хорошее качество и небольшой размер
+            communicate = edge_tts.Communicate(
+                text,
+                voice,
+                rate="+0%",
+                volume="+0%",
+                pitch="+0Hz"
+            )
+
             # Edge TTS возвращает генератор чанков
             async for chunk in communicate.stream():
                 if chunk["type"] == "audio":
                     yield chunk["data"]
-                    
+
         except Exception as e:
             print(f"Ошибка потокового синтеза речи: {e}")
             raise

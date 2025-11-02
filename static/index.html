@@ -308,6 +308,43 @@
             font-size: 14px;
             color: #856404;
         }
+
+        .model-selector-container {
+            background: #f0f0f0;
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .model-selector-label {
+            font-weight: 600;
+            color: #333;
+            font-size: 14px;
+        }
+
+        .model-selector {
+            flex: 1;
+            padding: 10px 15px;
+            font-size: 14px;
+            border: 2px solid #667eea;
+            border-radius: 8px;
+            background: white;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .model-selector:hover {
+            border-color: #764ba2;
+        }
+
+        .model-selector:focus {
+            outline: none;
+            border-color: #764ba2;
+            box-shadow: 0 0 0 3px rgba(118, 75, 162, 0.1);
+        }
     </style>
 </head>
 
@@ -315,6 +352,13 @@
     <div class="container">
         <h1>🎤 Голосовой Ассистент</h1>
         <div class="subtitle">Потоковое распознавание • Непрерывный диалог</div>
+
+        <div class="model-selector-container">
+            <label class="model-selector-label">🤖 Модель:</label>
+            <select id="modelSelector" class="model-selector" onchange="changeModel()">
+                <option value="">Загрузка...</option>
+            </select>
+        </div>
 
         <div id="status" class="status idle">
             Готов к работе
@@ -388,8 +432,11 @@
         let speechStart = null;
         let vadCheckInterval = null;
         const SPEECH_THRESHOLD = 15; // Порог громкости для детекции речи (%)
+        const INTERRUPT_THRESHOLD = 18; // Порог для прерывания (немного выше обычного)
+        const INTERRUPT_MIN_DURATION = 300; // Минимальная длительность громкого звука для прерывания (0.3 сек)
         const SILENCE_DURATION = 500; // Миллисекунды тишины для завершения фразы (0.5 сек)
         const MIN_SPEECH_DURATION = 300; // Минимальная длительность речи
+        let interruptSpeechStart = null; // Время начала речи для прерывания
 
         const statusDiv = document.getElementById('status');
         const conversationDiv = document.getElementById('conversation');
@@ -414,7 +461,9 @@
             });
         } else {
             // DOM уже загружен
-            setTimeout(() => startPlaybackVisualizer(), 100);
+            setTimeout(() => {
+                startPlaybackVisualizer();
+            }, 100);
         }
 
         // Обновление статуса
@@ -635,15 +684,44 @@
                 case 'listening':
                     console.log('📡 Состояние: LISTENING');
                     updateStatus('🎧 Слушаю... Говорите!', 'listening');
+
+                    // Останавливаем все активные воспроизведения (для случая прерывания)
+                    if (currentAudioElements.length > 0 || isPlayingAudio) {
+                        console.log('⏹️ Остановка воспроизведений при переходе в listening...');
+                        currentAudioElements.forEach((audioEl) => {
+                            try {
+                                audioEl.pause();
+                                audioEl.currentTime = 0;
+                                audioEl.src = '';
+                            } catch (e) {
+                                console.error('❌ Ошибка остановки audio:', e);
+                            }
+                        });
+                        currentAudioElements = [];
+                        isPlayingAudio = false;
+                        currentAudioChunks = [];
+                    }
+
                     // Возобновляем VAD и запись
                     if (!vadCheckInterval) {
                         vadCheckInterval = setInterval(checkVoiceActivity, 100);
                         console.log('✅ VAD активирован');
                     }
-                    // Сбрасываем состояние VAD для корректной обработки новой речи
-                    isSpeaking = false;
-                    silenceStart = null;
-                    speechStart = null;
+
+                    // Если переходим в listening после прерывания и пользователь все еще говорит
+                    if (isSpeaking && speechStart) {
+                        console.log('🎤 Продолжаем запись после прерывания');
+                        startAudioRecording();
+                        // НЕ сбрасываем isSpeaking, speechStart - пусть запись продолжится
+                        silenceStart = null;
+                        interruptSpeechStart = null;
+                    } else {
+                        // Сбрасываем состояние VAD для корректной обработки новой речи
+                        isSpeaking = false;
+                        silenceStart = null;
+                        speechStart = null;
+                        interruptSpeechStart = null; // Сбрасываем счетчик прерывания
+                    }
                     break;
                 case 'processing':
                     console.log('📡 Состояние: PROCESSING');
@@ -657,13 +735,16 @@
                     stopAudioRecording();
                     break;
                 case 'speaking':
-                    console.log('📡 Состояние: SPEAKING');
+                    console.log('📡 Состояние: SPEAKING - currentState установлен в:', currentState);
                     updateStatus('🔊 Отвечаю...', 'speaking');
+
                     // ОСТАВЛЯЕМ VAD и запись активными для детекции прерывания
                     // VAD продолжает работать чтобы детектировать речь пользователя
                     if (!vadCheckInterval) {
                         vadCheckInterval = setInterval(checkVoiceActivity, 100);
-                        console.log('✅ VAD активирован для детекции прерывания');
+                        console.log('✅ VAD активирован для детекции прерывания, интервал ID:', vadCheckInterval);
+                    } else {
+                        console.log('ℹ️ VAD уже активен, интервал ID:', vadCheckInterval);
                     }
                     // НЕ останавливаем запись аудио чтобы детектировать прерывание
                     break;
@@ -765,6 +846,13 @@
 
             // Периодически проверяем новые чанки и воспроизводим их
             const checkInterval = setInterval(async () => {
+                // Проверяем что диалог еще активен
+                if (!isDialogActive) {
+                    console.log('⏹️ Диалог остановлен, прекращаем проверку чанков');
+                    clearInterval(checkInterval);
+                    return;
+                }
+
                 if (currentAudioChunks.length > 0) {
                     // Берем все новые чанки
                     const chunksToPlay = currentAudioChunks.splice(0);
@@ -774,7 +862,15 @@
             }, 200); // Проверяем каждые 200мс
 
             // Воспроизводим чанки из очереди
-            while (playbackQueue.length > 0 || currentAudioChunks.length > 0) {
+            while ((playbackQueue.length > 0 || currentAudioChunks.length > 0) && isDialogActive) {
+                // Проверяем что диалог еще активен
+                if (!isDialogActive) {
+                    console.log('⏹️ Диалог остановлен, прекращаем воспроизведение');
+                    clearInterval(checkInterval);
+                    isPlayingAudio = false;
+                    return;
+                }
+
                 // Ждем пока в очереди будут чанки
                 if (playbackQueue.length === 0) {
                     await new Promise(resolve => setTimeout(resolve, 100));
@@ -790,8 +886,8 @@
                     console.log('▶️ Воспроизведение', chunksToPlay.length, 'чанков, размер:', chunksToPlay.reduce((sum, chunk) => sum + chunk.length, 0), 'байт');
 
                     // Объединяем чанки в один Blob
-                    // Edge TTS возвращает WebM (кодек Opus)
-                    const audioBlob = new Blob(chunksToPlay, { type: 'audio/webm; codecs=opus' });
+                    // Edge TTS возвращает MP3 (audio/mpeg) для совместимости с Safari
+                    const audioBlob = new Blob(chunksToPlay, { type: 'audio/mpeg' });
                     const audioUrl = URL.createObjectURL(audioBlob);
 
                     // Создаем audio элемент для воспроизведения
@@ -893,6 +989,15 @@
 
                     // Воспроизводим и ждем окончания
                     try {
+                        // Проверяем что диалог еще активен перед воспроизведением
+                        if (!isDialogActive) {
+                            console.log('⏹️ Диалог остановлен, пропускаем воспроизведение');
+                            URL.revokeObjectURL(audioUrl);
+                            clearInterval(checkInterval);
+                            isPlayingAudio = false;
+                            return;
+                        }
+
                         // Проверяем готовность к воспроизведению
                         if (audioElement.readyState < 2) {
                             console.log('⏳ Ожидание загрузки аудио... (readyState:', audioElement.readyState, ')');
@@ -912,6 +1017,15 @@
                                     reject(audioElement.error || new Error('Ошибка загрузки аудио'));
                                 }, { once: true });
                             });
+                        }
+
+                        // Еще раз проверяем после await
+                        if (!isDialogActive) {
+                            console.log('⏹️ Диалог остановлен после загрузки, пропускаем воспроизведение');
+                            URL.revokeObjectURL(audioUrl);
+                            clearInterval(checkInterval);
+                            isPlayingAudio = false;
+                            return;
                         }
 
                         // Попытка воспроизведения
@@ -1162,7 +1276,16 @@
         }
 
         // Простой VAD на основе громкости (с детекцией прерывания)
+        let lastDebugLog = 0;
         function checkVoiceActivity() {
+            const now = Date.now();
+
+            // Отладочное логирование раз в секунду
+            if (currentState === 'speaking' && now - lastDebugLog > 1000) {
+                console.log('🔍 VAD проверка: analyser=', !!analyser, 'isDialogActive=', isDialogActive, 'currentState=', currentState);
+                lastDebugLog = now;
+            }
+
             if (!analyser || !isDialogActive) return;
 
             analyser.getByteFrequencyData(dataArray);
@@ -1175,8 +1298,85 @@
             const average = sum / dataArray.length;
             const volumePercent = Math.round((average / 255) * 100);
 
-            const now = Date.now();
+            // Если мы в состоянии speaking, используем более строгие критерии для прерывания
+            if (currentState === 'speaking') {
+                // Логируем громкость для отладки прерываний
+                if (volumePercent > 10) {
+                    console.log('🔊 Громкость во время speaking:', volumePercent, '% (порог прерывания:', INTERRUPT_THRESHOLD, '%)');
+                }
 
+                if (volumePercent > INTERRUPT_THRESHOLD) {
+                    // Громкий звук обнаружен
+                    if (!interruptSpeechStart) {
+                        interruptSpeechStart = now;
+                        console.log('🎤 Возможное прерывание (громкость:', volumePercent, '%), ожидаем подтверждения...');
+                    } else {
+                        // Проверяем длительность
+                        const interruptDuration = now - interruptSpeechStart;
+                        if (interruptDuration >= INTERRUPT_MIN_DURATION) {
+                            console.log('⚠️ Подтверждено прерывание! (длительность:', interruptDuration, 'мс)');
+
+                            // Останавливаем ВСЕ активные аудио элементы
+                            console.log('⏹️ Остановка всех воспроизведений при прерывании...');
+                            currentAudioElements.forEach((audioEl) => {
+                                try {
+                                    audioEl.pause();
+                                    audioEl.currentTime = 0;
+                                    audioEl.src = '';
+                                    console.log('⏹️ Остановлен streaming audio элемент');
+                                } catch (e) {
+                                    console.error('❌ Ошибка остановки streaming audio:', e);
+                                }
+                            });
+                            currentAudioElements = [];
+
+                            // Останавливаем все audio элементы на странице
+                            document.querySelectorAll('audio').forEach((audioEl) => {
+                                try {
+                                    audioEl.pause();
+                                    audioEl.currentTime = 0;
+                                    console.log('⏹️ Остановлен audio элемент из DOM');
+                                } catch (e) {
+                                    console.error('❌ Ошибка остановки audio из DOM:', e);
+                                }
+                            });
+
+                            // Очищаем флаги и очереди воспроизведения
+                            isPlayingAudio = false;
+                            currentAudioChunks = [];
+                            currentStreamingMessage = null;
+                            currentStreamingText = '';
+
+                            // Отправляем interrupt на сервер
+                            if (ws && ws.readyState === WebSocket.OPEN) {
+                                ws.send(JSON.stringify({ type: 'interrupt' }));
+                            }
+
+                            // СРАЗУ начинаем записывать новую речь пользователя (не ждем ответа от сервера)
+                            console.log('🎤 Немедленный запуск записи после прерывания');
+                            isSpeaking = true;
+                            speechStart = now;
+                            silenceStart = null;
+
+                            // Запускаем запись сразу
+                            startAudioRecording();
+                            console.log('✅ Запись активирована для захвата речи при прерывании');
+
+                            // interruptSpeechStart НЕ сбрасываем - он будет сброшен при переходе в listening
+                            return;
+                        }
+                    }
+                } else {
+                    // Звук стал тише порога прерывания - сбрасываем счетчик
+                    if (interruptSpeechStart) {
+                        console.log('🔇 Звук стих, сбрасываем счетчик прерывания');
+                        interruptSpeechStart = null;
+                    }
+                }
+                return; // В состоянии speaking не обрабатываем обычную речь
+            }
+
+            // Обычная логика детекции речи (для состояния listening)
             if (volumePercent > SPEECH_THRESHOLD) {
                 // Детектирована речь
                 if (!isSpeaking) {
@@ -1184,23 +1384,6 @@
                     isSpeaking = true;
                     speechStart = now;
                     silenceStart = null;
-
-                    // Если мы в состоянии speaking, это прерывание!
-                    if (currentState === 'speaking') {
-                        console.log('⚠️ Детектировано прерывание во время воспроизведения!');
-                        // Находим активный аудио элемент и останавливаем его
-                        const activeAudio = document.querySelector('#response-audio');
-                        if (activeAudio && !activeAudio.paused) {
-                            activeAudio.pause();
-                        }
-                        // Отправляем interrupt на сервер
-                        if (ws && ws.readyState === WebSocket.OPEN) {
-                            ws.send(JSON.stringify({ type: 'interrupt' }));
-                        }
-                        // Запись НЕ начинаем - сервер переведет в listening состояние
-                        // а handleStateChange уже сбросит VAD состояние
-                        return;
-                    }
 
                     // Нормальное начало речи в состоянии listening
                     startAudioRecording();
@@ -1324,6 +1507,58 @@
             if (isDialogActive) return;
 
             try {
+                // Полная очистка всех аудио данных перед началом нового диалога
+                console.log('🧹 Очистка аудио данных перед новым диалогом...');
+
+                // Останавливаем все аудио элементы
+                currentAudioElements.forEach((audioEl) => {
+                    try {
+                        audioEl.pause();
+                        audioEl.currentTime = 0;
+                        audioEl.src = '';
+                        audioEl.remove();
+                    } catch (e) {
+                        console.error('Ошибка очистки audio:', e);
+                    }
+                });
+                currentAudioElements = [];
+
+                // Останавливаем все audio на странице
+                document.querySelectorAll('audio').forEach((audioEl) => {
+                    try {
+                        audioEl.pause();
+                        audioEl.currentTime = 0;
+                        audioEl.src = '';
+                        audioEl.remove();
+                    } catch (e) {}
+                });
+
+                // Очищаем буфер аудио чанков
+                currentAudioChunks = [];
+                isPlayingAudio = false;
+
+                // Останавливаем визуализаторы
+                stopPlaybackVisualizer();
+                stopVisualizer();
+
+                // Очищаем историю сообщений в UI
+                conversationDiv.innerHTML = `
+                    <div class="empty-state">
+                        <p>💬 История сообщений пуста</p>
+                        <p>Начните диалог, нажав кнопку ниже</p>
+                    </div>
+                `;
+
+                // Очищаем историю на сервере (в LLM)
+                try {
+                    await fetch('/api/clear-history', { method: 'POST' });
+                    console.log('✅ История на сервере очищена');
+                } catch (e) {
+                    console.error('❌ Ошибка очистки истории на сервере:', e);
+                }
+
+                console.log('✅ Аудио данные и история очищены');
+
                 isDialogActive = true;
                 startBtn.style.display = 'none';
                 stopBtn.style.display = 'inline-block';
@@ -1352,18 +1587,38 @@
 
             // Останавливаем все активные воспроизведения аудио
             console.log('⏹️ Остановка всех воспроизведений...');
+
+            // Останавливаем все аудио элементы из массива
             currentAudioElements.forEach((audioEl) => {
                 try {
                     audioEl.pause();
                     audioEl.currentTime = 0;
+                    audioEl.src = ''; // Очищаем источник
                     console.log('⏹️ Остановлен audio элемент');
                 } catch (e) {
                     console.error('❌ Ошибка остановки audio:', e);
                 }
             });
             currentAudioElements = [];
+
+            // Останавливаем все audio элементы на странице (для надежности)
+            document.querySelectorAll('audio').forEach((audioEl) => {
+                try {
+                    audioEl.pause();
+                    audioEl.currentTime = 0;
+                    console.log('⏹️ Остановлен audio элемент из DOM');
+                } catch (e) {
+                    console.error('❌ Ошибка остановки audio из DOM:', e);
+                }
+            });
+
+            // Очищаем флаги воспроизведения
             isPlayingAudio = false;
             currentAudioChunks = [];
+
+            // Сбрасываем потоковые данные
+            currentStreamingMessage = null;
+            currentStreamingText = '';
 
             if (ws) {
                 ws.send(JSON.stringify({ type: 'stop' }));
@@ -1393,6 +1648,7 @@
             isSpeaking = false;
             silenceStart = null;
             speechStart = null;
+            interruptSpeechStart = null;
 
             stopVisualizer();
             hidePartialTranscript();
@@ -1409,6 +1665,86 @@
                     stopDialog();
                 }
             }
+        });
+
+        // Загрузка списка доступных моделей
+        async function loadModels() {
+            try {
+                console.log('📋 Загрузка списка моделей...');
+                const response = await fetch('/api/models');
+                const data = await response.json();
+
+                if (data.status === 'success') {
+                    const selector = document.getElementById('modelSelector');
+                    selector.innerHTML = ''; // Очищаем селект
+
+                    // Добавляем модели в список
+                    data.models.forEach(modelName => {
+                        const option = document.createElement('option');
+                        option.value = modelName;
+                        option.textContent = modelName;
+
+                        // Отмечаем текущую модель
+                        if (modelName === data.current_model) {
+                            option.selected = true;
+                        }
+
+                        selector.appendChild(option);
+                    });
+
+                    console.log(`✅ Загружено ${data.models.length} моделей, текущая: ${data.current_model}`);
+                } else {
+                    console.error('❌ Ошибка загрузки моделей:', data);
+                }
+            } catch (error) {
+                console.error('❌ Ошибка при загрузке списка моделей:', error);
+                const selector = document.getElementById('modelSelector');
+                selector.innerHTML = '<option value="">Ошибка загрузки</option>';
+            }
+        }
+
+        // Смена активной модели
+        async function changeModel() {
+            const selector = document.getElementById('modelSelector');
+            const newModel = selector.value;
+
+            if (!newModel) {
+                console.warn('⚠️ Модель не выбрана');
+                return;
+            }
+
+            try {
+                console.log(`🔄 Смена модели на: ${newModel}`);
+                const response = await fetch('/api/set-model', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ model_name: newModel })
+                });
+
+                const data = await response.json();
+
+                if (data.status === 'success') {
+                    console.log(`✅ ${data.message}`);
+                    // Показываем уведомление пользователю
+                    updateStatus(`✅ Модель изменена на ${newModel}`, 'idle');
+                    setTimeout(() => {
+                        updateStatus('Готов к работе', 'idle');
+                    }, 2000);
+                } else {
+                    console.error('❌ Ошибка смены модели:', data);
+                    alert('Ошибка при смене модели');
+                }
+            } catch (error) {
+                console.error('❌ Ошибка при смене модели:', error);
+                alert('Ошибка при смене модели: ' + error.message);
+            }
+        }
+
+        // Загружаем список моделей при загрузке страницы
+        window.addEventListener('load', () => {
+            loadModels();
         });
     </script>
 </body>

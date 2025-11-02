@@ -179,3 +179,13 @@ class LLMModule:
         """Очистка истории разговора"""
         self.conversation_history = []
         print("История разговора очищена")
+
+    def set_model(self, model_name: str):
+        """
+        Смена активной модели
+
+        Args:
+            model_name: имя новой модели в Ollama
+        """
+        self.model_name = model_name
+        print(f"Модель изменена на: {model_name}")
