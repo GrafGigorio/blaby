@@ -632,7 +632,7 @@
 
                 switch (data.type) {
                     case 'state':
-                        handleStateChange(data.state);
+                        void handleStateChange(data.state);
                         break;
                     case 'partial_transcript':
                         showPartialTranscript(data.text);
@@ -679,7 +679,7 @@
         }
 
         // Обработка изменения состояния
-        function handleStateChange(state) {
+        async function handleStateChange(state) {
             switch (state) {
                 case 'listening':
                     console.log('📡 Состояние: LISTENING');
@@ -711,7 +711,7 @@
                     // Если переходим в listening после прерывания и пользователь все еще говорит
                     if (isSpeaking && speechStart) {
                         console.log('🎤 Продолжаем запись после прерывания');
-                        startAudioRecording();
+                        await startAudioRecording();
                         // НЕ сбрасываем isSpeaking, speechStart - пусть запись продолжится
                         silenceStart = null;
                         interruptSpeechStart = null;
@@ -1277,7 +1277,7 @@
 
         // Простой VAD на основе громкости (с детекцией прерывания)
         let lastDebugLog = 0;
-        function checkVoiceActivity() {
+        async function checkVoiceActivity() {
             const now = Date.now();
 
             // Отладочное логирование раз в секунду
@@ -1359,7 +1359,7 @@
                             silenceStart = null;
 
                             // Запускаем запись сразу
-                            startAudioRecording();
+                            await startAudioRecording();
                             console.log('✅ Запись активирована для захвата речи при прерывании');
 
                             // interruptSpeechStart НЕ сбрасываем - он будет сброшен при переходе в listening
@@ -1386,7 +1386,7 @@
                     silenceStart = null;
 
                     // Нормальное начало речи в состоянии listening
-                    startAudioRecording();
+                    await startAudioRecording();
                 } else {
                     // Речь продолжается - сбрасываем таймер тишины
                     silenceStart = null;
@@ -1445,33 +1445,54 @@
         }
 
         // Запись аудио для отправки на сервер (RAW PCM для Vosk)
-        function startAudioRecording() {
+        async function startAudioRecording() {
             if (!audioContext || !audioSourceNode) return;
 
             // Останавливаем старый процессор если он существует
             if (audioProcessor) {
                 console.log('⚠️ Останавливаем старый процессор аудио');
                 audioProcessor.disconnect();
+                audioProcessor.port.onmessage = null;
                 audioProcessor = null;
             }
 
-            // Создаем ScriptProcessorNode для захвата raw PCM audio
-            audioProcessor = audioContext.createScriptProcessor(4096, 1, 1);
+            try {
+                // Загружаем AudioWorklet модуль если ещё не загружен
+                if (!audioContext.audioWorklet) {
+                    console.error('❌ AudioWorklet не поддерживается в этом браузере');
+                    return;
+                }
 
-            audioProcessor.onaudioprocess = (event) => {
-                const inputData = event.inputBuffer.getChannelData(0);
-                sendPCMAudioChunk(inputData);
-            };
+                // Пытаемся добавить модуль (игнорируем ошибку если уже добавлен)
+                try {
+                    await audioContext.audioWorklet.addModule('/static/vad-processor.js');
+                } catch (e) {
+                    // Модуль уже загружен, продолжаем
+                }
 
-            // Подключаем существующий источник к процессору
-            audioSourceNode.connect(audioProcessor);
-            audioProcessor.connect(audioContext.destination);
-            console.log('🎙️ Начата запись PCM аудио');
+                // Создаем AudioWorkletNode для захвата raw PCM audio
+                audioProcessor = new AudioWorkletNode(audioContext, 'vad-processor');
+
+                audioProcessor.port.onmessage = (event) => {
+                    const audioData = event.data.audioData;
+                    sendPCMAudioChunk(audioData);
+                };
+
+                // Подключаем существующий источник к процессору
+                audioSourceNode.connect(audioProcessor);
+                audioProcessor.connect(audioContext.destination);
+                console.log('🎙️ Начата запись PCM аудио (AudioWorklet)');
+            } catch (error) {
+                console.error('❌ Ошибка создания AudioWorklet:', error);
+            }
         }
 
         function stopAudioRecording() {
             if (audioProcessor) {
                 audioProcessor.disconnect();
+                if (audioProcessor.port) {
+                    audioProcessor.port.onmessage = null;
+                }
                 audioProcessor = null;
                 console.log('⏹️ Запись PCM остановлена');
             }
@@ -1530,7 +1551,7 @@
                         audioEl.currentTime = 0;
                         audioEl.src = '';
                         audioEl.remove();
-                    } catch (e) {}
+                    } catch (e) { }
                 });
 
                 // Очищаем буфер аудио чанков

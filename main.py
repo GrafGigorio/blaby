@@ -197,6 +197,9 @@ async def lifespan(app: FastAPI):
 # Инициализация FastAPI с lifespan
 app = FastAPI(title="Voice AI Assistant", lifespan=lifespan)
 
+# Монтируем директорию static для раздачи статических файлов
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
 
 @app.get("/", response_class=HTMLResponse)
 async def root():
