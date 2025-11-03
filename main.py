@@ -449,6 +449,9 @@ async def generate_and_send_response(websocket, final_text, state, generation_in
         
         # Потоковая генерация от LLM и TTS с проверкой прерывания
         chunk_num = 0
+        tech_buffer = ""  # Буфер для накопления TECH блока
+        tech_tag_open = False  # Флаг открытого TECH тега
+        
         async for text_chunk in llm_module.generate_response_stream(final_text, system_prompt=system_prompt):
             # Проверяем флаг прерывания
             if generation_interrupted.is_set():
@@ -459,15 +462,49 @@ async def generate_and_send_response(websocket, final_text, state, generation_in
             # Логируем оригинальный чанк для отладки
             print(f"📝 Оригинальный чанк от LLM #{chunk_num}: '{text_chunk}' (длина: {len(text_chunk)})")
             
-            # Передаем текст как есть, без изменений
+            # Передаем текст как есть, без изменений в full_response
             full_response += text_chunk
-            text_buffer += text_chunk
             
-            # Отправляем текстовый чанк для отображения
-            if text_chunk:  # Отправляем только если есть текст
+            # Обрабатываем TECH блоки - разделяем обычный текст и технический блок
+            remaining = text_chunk
+            text_for_buffer = ""  # Текст для добавления в text_buffer (без TECH блоков)
+            
+            while remaining:
+                if not tech_tag_open:
+                    # Ищем открывающий тег <TECH>
+                    tech_start = remaining.upper().find('<TECH>')
+                    if tech_start >= 0:
+                        # Текст до TECH добавляем в буфер
+                        text_for_buffer += remaining[:tech_start]
+                        # Начинаем TECH блок
+                        tech_tag_open = True
+                        tech_buffer = remaining[tech_start + 6:]  # +6 для длины '<TECH>'
+                        remaining = ""
+                    else:
+                        # TECH тега нет - весь текст обычный
+                        text_for_buffer += remaining
+                        remaining = ""
+                else:
+                    # TECH блок открыт - ищем закрывающий тег
+                    tech_end = remaining.upper().find('</TECH>')
+                    if tech_end >= 0:
+                        # Закрываем TECH блок
+                        tech_buffer += remaining[:tech_end]
+                        tech_tag_open = False
+                        tech_buffer = ""  # Очищаем буфер TECH блока
+                        remaining = remaining[tech_end + 7:]  # +7 для длины '</TECH>'
+                    else:
+                        # Закрывающего тега нет - накапливаем в TECH буфер
+                        tech_buffer += remaining
+                        remaining = ""
+            
+            # Добавляем только обычный текст (без TECH блоков) в text_buffer
+            if text_for_buffer:
+                text_buffer += text_for_buffer
+                # Отправляем текстовый чанк для отображения (только обычный текст)
                 await websocket.send_json({
                     "type": "text_chunk",
-                    "text": text_chunk
+                    "text": text_for_buffer
                 })
             
             # Накопляем текст до предложения (до точки, восклицательного или вопросительного знака)
@@ -529,6 +566,19 @@ async def generate_and_send_response(websocket, final_text, state, generation_in
                         print(f"⚠️ Ошибка TTS: {tts_error}")
                         import traceback
                         traceback.print_exc()
+        
+        # Обрабатываем незакрытый TECH блок после завершения цикла (если остался)
+        if tech_tag_open and tech_buffer and action_manager:
+            try:
+                # Пытаемся извлечь JSON из незакрытого TECH блока
+                json_match = re.search(r'\{.*\}', tech_buffer, re.DOTALL)
+                if json_match:
+                    json_str = json_match.group(0)
+                    parsed_data = json.loads(json_str)
+                    if isinstance(parsed_data, dict) and ("action" in parsed_data or "stage" in parsed_data):
+                        print(f"📊 Найден JSON в незакрытом TECH блоке: {parsed_data}")
+            except (json.JSONDecodeError, Exception) as e:
+                print(f"⚠️ Не удалось распарсить JSON из незакрытого TECH блока: {e}")
         
         # Обрабатываем остаток буфера (только если не было прерывания)
         if not generation_interrupted.is_set() and text_buffer.strip():

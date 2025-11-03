@@ -1659,14 +1659,36 @@
             // Обновляем финальный текст если нужно
             if (fullText && currentStreamingText !== fullText) {
                 currentStreamingText = fullText;
-                const textElement = currentStreamingMessage.querySelector('.streaming-text');
-                if (textElement) {
-                    textElement.textContent = fullText;
+                // Проверяем наличие currentStreamingMessage перед обращением к querySelector
+                if (currentStreamingMessage) {
+                    const textElement = currentStreamingMessage.querySelector('.streaming-text');
+                    if (textElement) {
+                        textElement.textContent = fullText;
+                    }
+                } else {
+                    // Если сообщение отсутствует, создаем его
+                    console.warn('⚠️ currentStreamingMessage отсутствует в handleStreamEnd, создаем автоматически');
+                    const emptyState = conversationDiv.querySelector('.empty-state');
+                    if (emptyState) emptyState.remove();
+
+                    currentStreamingMessage = document.createElement('div');
+                    currentStreamingMessage.className = 'message assistant';
+                    currentStreamingMessage.innerHTML = `
+                        <div class="message-label">👩 АСЯ</div>
+                        <div class="message-text streaming-text"></div>
+                    `;
+                    conversationDiv.appendChild(currentStreamingMessage);
+                    conversationDiv.scrollTop = conversationDiv.scrollHeight;
+                    
+                    const textElement = currentStreamingMessage.querySelector('.streaming-text');
+                    if (textElement) {
+                        textElement.textContent = fullText;
+                    }
                 }
             }
 
-            // Устанавливаем флаг что поток завершен
-            const streamEnded = true;
+            // Устанавливаем флаг что поток завершен - новые чанки не будут добавляться
+            isStreamActive = false;
 
             // Воспроизводим оставшиеся чанки только если еще не начали воспроизведение
             if (!isPlayingAudio && !processAudioChunksPromise) {
@@ -1687,17 +1709,30 @@
                 }
             } else {
                 // Если воспроизведение уже идет, просто ждем его окончания
-                console.log('⏳ Ожидание окончания воспроизведения...');
+                console.log('⏳ Воспроизведение уже идет (isPlayingAudio:', isPlayingAudio, ', processAudioChunksPromise:', !!processAudioChunksPromise, '), ожидаем окончания...');
                 if (processAudioChunksPromise) {
                     processAudioChunksPromise.then(() => {
+                        console.log('✅ Процесс воспроизведения завершен после stream_end');
                         processAudioChunksPromise = null;
                         sendSpeakingFinished();
-                    }).catch(() => {
+                    }).catch((error) => {
+                        console.error('❌ Ошибка в процессе воспроизведения:', error);
                         processAudioChunksPromise = null;
                         sendSpeakingFinished();
                     });
                 } else {
-                    sendSpeakingFinished();
+                    // Нет активного Promise, но isPlayingAudio = true - возможно воспроизведение идет через audio элементы
+                    // Даем немного времени на завершение, затем проверяем
+                    setTimeout(() => {
+                        if (!isPlayingAudio && currentAudioChunks.length === 0) {
+                            console.log('✅ Воспроизведение завершено после задержки');
+                            sendSpeakingFinished();
+                        } else {
+                            // Все еще идет - используем стандартную проверку
+                            console.log('⏳ Воспроизведение продолжается, используем стандартную проверку');
+                            sendSpeakingFinished();
+                        }
+                    }, 500);
                 }
             }
 
