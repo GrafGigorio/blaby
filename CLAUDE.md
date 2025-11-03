@@ -15,6 +15,22 @@ This is a **local voice AI assistant** that runs entirely offline. It provides a
 
 **Key Design Principle:** Everything runs locally without internet dependencies (except Edge TTS). User privacy is maintained by keeping all conversation history in memory only.
 
+## Documentation Structure
+
+This project has comprehensive documentation organized by topic:
+
+- **[README.md](README.md)** - Main project overview and quick links
+- **[docs/](docs/)** - All detailed documentation
+  - **[docs/PROJECT_SUMMARY.md](docs/PROJECT_SUMMARY.md)** - Complete project overview
+  - **[docs/architecture/](docs/architecture/)** - Architecture documentation
+  - **[docs/guides/](docs/guides/)** - Development guides (SETUP, QUICKSTART, DEVELOPMENT, CONTRIBUTING, REFACTORING)
+  - **[docs/testing/](docs/testing/)** - Testing documentation
+- **[api/README.md](api/README.md)** - API endpoints documentation (REST & WebSocket)
+- **[core/README.md](core/README.md)** - Core modules documentation (STT, LLM, TTS, Actions, State)
+- **[utils/README.md](utils/README.md)** - Utility modules documentation (text cleaning, port management)
+
+When working with a specific module, always check if it has a README.md in its directory.
+
 ## MCP Tools
 
 This project has access to Model Context Protocol (MCP) tools for enhanced development and testing:
@@ -140,82 +156,144 @@ mcp playwright playwright_get_visible_text
 
 ## Architecture
 
+### Key Features After Refactoring
+
+1. **Modular Structure**: Code organized into `api/`, `core/`, `utils/` directories
+2. **WebSocket Support**: Real-time streaming STT and TTS via WebSocket
+3. **Centralized Config**: All settings in `config.py`
+4. **Text Cleaning**: Automatic removal of TECH blocks and JSON from TTS output
+5. **Action System**: Special commands handling (internet access, system control)
+6. **Improved Frontend**: Modular JavaScript with separate audio/websocket/UI modules
+
 ### Request Flow
+
+**REST API Flow:**
 ```
 User Voice → Browser MediaRecorder → POST /api/voice-chat →
   1. Save audio to uploads/
   2. STT (Whisper) → transcribed text
   3. LLM (Ollama) → AI response text
-  4. TTS (Edge TTS) → audio file in outputs/
-  5. Return JSON with audio URL → Browser auto-plays
+  4. Text Cleaning (remove TECH blocks, JSON)
+  5. TTS (Edge TTS) → audio file in outputs/
+  6. Return JSON with audio URL → Browser auto-plays
+```
+
+**WebSocket Streaming Flow:**
+```
+User Voice → Browser MediaRecorder → WebSocket /ws/voice →
+  1. Stream audio chunks in real-time
+  2. Streaming STT → partial transcriptions
+  3. LLM generates response (streaming or complete)
+  4. Text Cleaning
+  5. TTS → stream audio chunks back
+  6. Browser plays audio as it arrives
 ```
 
 ### Module Structure
 
-**main.py** - FastAPI application with three key endpoints:
-- `POST /api/voice-chat` - Main voice interaction pipeline
-- `GET /api/audio/{filename}` - Serves generated audio files
-- `POST /api/clear-history` - Clears LLM conversation history
+**main.py** - FastAPI application entry point
+- Initializes all modules and configures routes
+- WebSocket support for real-time streaming
 
-**stt_module.py** - Whisper-based speech recognition:
-- `STTModule.__init__(model_size)` - Loads Whisper model (tiny/base/small/medium/large)
-- `transcribe(audio_path, language)` - Converts audio to text
-- Auto-detects CUDA vs CPU, uses fp16=False for CPU compatibility
+**api/** - API endpoints:
+- `api/voice_chat.py` - REST endpoint for voice interactions
+- `api/websocket.py` - WebSocket endpoint for streaming STT/TTS
+- `api/models.py` - Pydantic models for request/response validation
 
-**llm_module.py** - Ollama integration:
-- `LLMModule.__init__(model_name)` - Connects to local Ollama server
-- `generate_response(user_input, system_prompt)` - Generates AI response
-- Maintains conversation history (last 10 messages) in memory
-- Default model: `gpt-oss:20b`
+**core/** - Core modules:
+- `core/stt_module.py` - Whisper-based speech recognition
+  - `STTModule.__init__(model_size)` - Loads Whisper model
+  - `transcribe(audio_path, language)` - Converts audio to text
+  - Auto-detects CUDA vs CPU, uses fp16=False for CPU compatibility
+- `core/stt_streaming_module.py` - Real-time streaming STT
+- `core/llm_module.py` - Ollama LLM integration
+  - `LLMModule.__init__(model_name)` - Connects to local Ollama
+  - `generate_response(user_input, system_prompt)` - Generates AI response
+  - Maintains conversation history (last 10 messages)
+  - Default model: `gpt-oss:20b`
+- `core/tts_module.py` - Edge TTS synthesis
+  - `TTSModule.synthesize_async(text, output_path, language)` - Async speech generation
+  - Uses `ru-RU-SvetlanaNeural` for Russian, `en-US-JennyNeural` for English
+- `core/action_manager.py` - Special actions and commands handler
+- `core/state_manager.py` - Application state management
 
-**tts_module.py** - Edge TTS synthesis:
-- `TTSModule.synthesize_async(text, output_path, language)` - Async speech generation
-- Uses `ru-RU-SvetlanaNeural` for Russian, `en-US-JennyNeural` for English
-- `synthesize()` - Synchronous wrapper for backward compatibility
+**utils/** - Utility modules:
+- `utils/text_cleaning.py` - Text preprocessing for TTS (removes TECH blocks, JSON)
+- `utils/port_manager.py` - Network port management
 
-**static/index.html** - Web interface:
-- Single-page app with gradient UI
-- Uses MediaRecorder API for audio capture
+**static/** - Web interface:
+- `static/index.html` - Single-page app with gradient UI
+- `static/js/` - JavaScript modules for WebSocket, audio recording
+- `static/css/` - Styling
+- Uses MediaRecorder API and Web Audio API
 - Space bar hotkey for start/stop recording
-- Continuous conversation mode (auto-reactivates mic after response)
+- Continuous conversation mode with streaming support
 
 ### State Management
 
-**Conversation History:** Stored in `llm_module.conversation_history` (in-memory list). Limited to last 10 messages to prevent context overflow. Can be cleared via `/api/clear-history` endpoint.
+**Conversation History:**
+- Stored in `core/llm_module.py` as `conversation_history` (in-memory list)
+- Limited to last 10 messages to prevent context overflow
+- Can be cleared via `/api/clear-history` endpoint
+
+**Application State:**
+- Managed by `core/state_manager.py`
+- Tracks current assistant state (idle, listening, processing, speaking)
+- Coordinates between modules for proper workflow
+
+**Action System:**
+- Handled by `core/action_manager.py`
+- Processes special commands (e.g., "подключи интернет")
+- Can trigger external actions and provide feedback
 
 **Audio Files:**
 - Input recordings: `uploads/input_{timestamp}.wav`
 - Generated responses: `outputs/output_{timestamp}.wav`
 - Files persist on disk but are not automatically cleaned up
 
-**Module Initialization:** All modules (STT, LLM, TTS) are initialized during FastAPI startup event and stored as global variables for reuse across requests.
+**Module Initialization:**
+- All modules (STT, LLM, TTS, Actions, State) are initialized during FastAPI startup
+- Stored as global variables for reuse across requests
+- Configuration loaded from `config.py`
 
 ## Configuration
 
+Configuration is centralized in `config.py` at the project root.
+
 ### Changing Whisper Model Size
-In `main.py:42`, modify:
+In `config.py`, modify:
 ```python
-stt_module = STTModule(model_size="base")  # Options: tiny, base, small, medium, large
+DEFAULT_STT_MODEL = "base"  # Options: tiny, base, small, medium, large
 ```
 Trade-off: `tiny` is fastest but less accurate, `large` is most accurate but slowest.
 
 ### Changing LLM Model
-In `main.py:45`, modify:
+In `config.py`, modify:
 ```python
-llm_module = LLMModule(model_name="gpt-oss:20b")
+DEFAULT_LLM_MODEL = "gpt-oss:20b"
 ```
 Use any model from `ollama list`. Smaller models like `llama3.1:8b` will respond faster.
 
+### Other Configuration Options
+Available in `config.py`:
+- `HOST`, `PORT` - Server settings
+- `DEFAULT_TTS_VOICE_RU`, `DEFAULT_TTS_VOICE_EN` - TTS voice settings
+- `SILENCE_THRESHOLD` - VAD (Voice Activity Detection) threshold
+- `MAX_CONVERSATION_HISTORY` - Maximum messages in conversation history
+- `DEFAULT_SYSTEM_PROMPT` - Default system prompt for LLM
+
 ### Changing TTS Voice
-In `tts_module.py:17`, modify:
+TTS voice settings are in `config.py`:
 ```python
-self.voice = "ru-RU-SvetlanaNeural"  # See Edge TTS documentation for other voices
+DEFAULT_TTS_VOICE_RU = "ru-RU-SvetlanaNeural"
+DEFAULT_TTS_VOICE_EN = "en-US-JennyNeural"
 ```
+Or modify directly in `core/tts_module.py` if you need more control. See Edge TTS documentation for available voices.
 
 ### System Prompt
-The system prompt is defined in `main.py:102`:
+The system prompt is defined in `config.py`:
 ```python
-system_prompt = "Ты - полезный голосовой ассистент. Отвечай кратко и по делу, поскольку твой ответ будет озвучен."
+DEFAULT_SYSTEM_PROMPT = "Ты - полезный голосовой ассистент. Отвечай кратко и по делу, поскольку твой ответ будет озвучен."
 ```
 Keep responses concise since they will be spoken.
 
@@ -234,20 +312,55 @@ Keep responses concise since they will be spoken.
 ## Directory Structure
 ```
 blaBy/
-├── main.py              # FastAPI server & endpoints
-├── stt_module.py        # Whisper STT wrapper
-├── llm_module.py        # Ollama client wrapper
-├── tts_module.py        # Edge TTS wrapper
-├── static/
-│   └── index.html       # Web UI (served at root)
-├── uploads/             # Temporary audio inputs (user recordings)
-├── outputs/             # Generated audio responses
-├── venv/                # Python virtual environment
-├── requirements.txt     # Python dependencies
-├── start.sh             # Automated startup script
-├── README.md            # User-facing documentation
-├── SETUP.md             # Installation guide
-└── PROJECT_SUMMARY.md   # Detailed project documentation
+├── main.py                 # FastAPI application entry point
+├── config.py               # Centralized configuration
+├── start.sh                # Automated startup script
+├── requirements.txt        # Python dependencies
+│
+├── api/                    # API endpoints
+│   ├── voice_chat.py       # REST API for voice interactions
+│   ├── websocket.py        # WebSocket for streaming
+│   ├── websocket_helpers.py
+│   ├── models.py           # Pydantic models
+│   └── README.md           # API documentation
+│
+├── core/                   # Core modules
+│   ├── stt_module.py       # Whisper STT wrapper
+│   ├── stt_streaming_module.py
+│   ├── llm_module.py       # Ollama LLM client
+│   ├── tts_module.py       # Edge TTS wrapper
+│   ├── action_manager.py   # Actions handler
+│   ├── state_manager.py    # State management
+│   └── README.md           # Core modules documentation
+│
+├── utils/                  # Utility modules
+│   ├── text_cleaning.py    # Text preprocessing
+│   ├── port_manager.py     # Port management
+│   └── README.md           # Utils documentation
+│
+├── static/                 # Frontend
+│   ├── index.html          # Main web UI
+│   ├── js/                 # JavaScript modules
+│   │   ├── audio.js
+│   │   ├── websocket.js
+│   │   └── ui.js
+│   ├── css/                # Stylesheets
+│   └── pcm-processor.js    # Audio processing worker
+│
+├── docs/                   # Documentation
+│   ├── README.md           # Documentation index
+│   ├── PROJECT_SUMMARY.md
+│   ├── architecture/       # Architecture docs
+│   ├── guides/             # Developer guides
+│   └── testing/            # Testing docs
+│
+├── uploads/                # Temporary audio inputs
+├── outputs/                # Generated audio responses
+├── models/                 # Downloaded ML models
+├── venv/                   # Python virtual environment
+│
+├── README.md               # Main project readme
+└── CLAUDE.md               # This file (AI assistant instructions)
 ```
 
 ## Testing the Pipeline
@@ -258,22 +371,28 @@ To manually test individual components:
 
 ```python
 # Test STT
-from stt_module import STTModule
+from core.stt_module import STTModule
 stt = STTModule(model_size="base")
 text = stt.transcribe("path/to/audio.wav", language="ru")
 print(text)
 
 # Test LLM
-from llm_module import LLMModule
+from core.llm_module import LLMModule
 llm = LLMModule(model_name="gpt-oss:20b")
 response = llm.generate_response("Привет, как дела?")
 print(response)
 
 # Test TTS
-from tts_module import TTSModule
+from core.tts_module import TTSModule
 import asyncio
 tts = TTSModule()
 asyncio.run(tts.synthesize_async("Привет мир", "test_output.wav", language="ru"))
+
+# Test Text Cleaning
+from utils.text_cleaning import clean_text_for_tts
+text = "TECH:debug Привет! {\"json\": \"data\"}"
+cleaned = clean_text_for_tts(text)
+print(cleaned)  # Output: "Привет!"
 ```
 
 ### Automated UI Testing (with Playwright)

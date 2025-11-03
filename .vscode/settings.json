@@ -1,17 +1,126 @@
 {
+    // Python Interpreter
     "python.defaultInterpreterPath": "${workspaceFolder}/venv/bin/python",
+
+    // Linting
     "python.linting.enabled": true,
     "python.linting.pylintEnabled": false,
     "python.linting.flake8Enabled": true,
+    "python.linting.flake8Args": [
+        "--max-line-length=120",
+        "--ignore=E203,W503"
+    ],
+
+    // Formatting
     "python.formatting.provider": "black",
+    "python.formatting.blackArgs": [
+        "--line-length=120"
+    ],
     "editor.formatOnSave": true,
+    "[python]": {
+        "editor.defaultFormatter": "ms-python.black-formatter",
+        "editor.formatOnSave": true,
+        "editor.codeActionsOnSave": {
+            "source.organizeImports": "explicit"
+        }
+    },
+
+    // File exclusions
     "files.exclude": {
         "**/__pycache__": true,
         "**/*.pyc": true,
-        ".pytest_cache": true
+        ".pytest_cache": true,
+        "**/.DS_Store": true,
+        ".venv": true
     },
+
+    // Search exclusions
+    "search.exclude": {
+        "**/__pycache__": true,
+        "**/*.pyc": true,
+        "**/venv": true,
+        "**/models": true,
+        "**/uploads": true,
+        "**/outputs": true
+    },
+
+    // Python Analysis (Pylance)
     "python.analysis.extraPaths": [
-        "${workspaceFolder}"
-    ]
+        "${workspaceFolder}",
+        "${workspaceFolder}/api",
+        "${workspaceFolder}/core",
+        "${workspaceFolder}/utils"
+    ],
+    "python.analysis.typeCheckingMode": "basic",
+    "python.analysis.autoImportCompletions": true,
+    "python.analysis.diagnosticSeverityOverrides": {
+        "reportMissingImports": "warning",
+        "reportMissingTypeStubs": "none"
+    },
+
+    // Auto-complete
+    "python.autoComplete.extraPaths": [
+        "${workspaceFolder}",
+        "${workspaceFolder}/api",
+        "${workspaceFolder}/core",
+        "${workspaceFolder}/utils"
+    ],
+
+    // Testing
+    "python.testing.pytestEnabled": true,
+    "python.testing.unittestEnabled": false,
+    "python.testing.pytestArgs": [
+        "."
+    ],
+
+    // Terminal
+    "terminal.integrated.env.osx": {
+        "PYTHONPATH": "${workspaceFolder}"
+    },
+    "terminal.integrated.env.linux": {
+        "PYTHONPATH": "${workspaceFolder}"
+    },
+
+    // Editor
+    "editor.rulers": [120],
+    "editor.tabSize": 4,
+    "editor.insertSpaces": true,
+
+    // Files
+    "files.trimTrailingWhitespace": true,
+    "files.insertFinalNewline": true,
+    "files.associations": {
+        "*.py": "python",
+        ".env.*": "dotenv"
+    },
+
+    // Git
+    "git.ignoreLimitWarning": true,
+
+    // Specific file type settings
+    "[json]": {
+        "editor.defaultFormatter": "esbenp.prettier-vscode",
+        "editor.tabSize": 2
+    },
+    "[javascript]": {
+        "editor.defaultFormatter": "esbenp.prettier-vscode",
+        "editor.tabSize": 2
+    },
+    "[html]": {
+        "editor.defaultFormatter": "esbenp.prettier-vscode",
+        "editor.tabSize": 2
+    },
+    "[css]": {
+        "editor.defaultFormatter": "esbenp.prettier-vscode",
+        "editor.tabSize": 2
+    },
+    "[markdown]": {
+        "editor.wordWrap": "on",
+        "editor.quickSuggestions": {
+            "comments": "off",
+            "strings": "off",
+            "other": "off"
+        }
+    }
 }
 

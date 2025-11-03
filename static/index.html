@@ -2142,6 +2142,14 @@
                                 silenceStart = null;
                                 speechStart = null;
                                 stopAudioRecording();
+
+                                // Отправляем speaking_finished, чтобы вернуться к прослушиванию
+                                if (ws && ws.readyState === WebSocket.OPEN) {
+                                    ws.send(JSON.stringify({ type: 'speaking_finished' }));
+                                    console.log('🔄 speaking_finished отправлен после нераспознанной речи');
+                                } else {
+                                    console.error('❌ WebSocket не готов для отправки speaking_finished');
+                                }
                             }
                         }
                     }

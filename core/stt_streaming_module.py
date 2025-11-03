@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 from vosk import Model, KaldiRecognizer
+from config import VOSK_MODEL_PATH
 
 
 class StreamingSTTModule:
@@ -13,19 +14,26 @@ class StreamingSTTModule:
         Инициализация Vosk модели для потокового распознавания
 
         Args:
-            model_path: путь к модели Vosk (если None, используется models/vosk-model-small-ru-0.22)
+            model_path: путь к модели Vosk (если None, используется из config.VOSK_MODEL_PATH)
             sample_rate: частота дискретизации аудио (по умолчанию 16000 Hz)
         """
         if model_path is None:
-            model_path = Path(__file__).parent / "models" / "vosk-model-small-ru-0.22"
+            model_path = VOSK_MODEL_PATH
 
         if not os.path.exists(model_path):
-            raise FileNotFoundError(f"Модель Vosk не найдена по пути: {model_path}")
+            raise FileNotFoundError(
+                f"Модель Vosk не найдена по пути: {model_path}\n"
+                f"Скачайте модель с https://alphacephei.com/vosk/models\n"
+                f"Рекомендуется: vosk-model-ru-0.42 (1.5 ГБ) для лучшего качества\n"
+                f"Или: vosk-model-small-ru-0.22 (45 МБ) для быстрой работы\n"
+                f"Распакуйте в: {model_path.parent}/"
+            )
 
         print(f"Загрузка Vosk модели из {model_path}...")
+        print(f"Размер модели: {model_path.name}")
         self.model = Model(str(model_path))
         self.sample_rate = sample_rate
-        print("Vosk модель загружена успешно")
+        print("Vosk модель загружена успешно ✓")
 
     def create_recognizer(self):
         """

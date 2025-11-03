@@ -2,18 +2,18 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Python: FastAPI Main",
+            "name": "🚀 FastAPI: Production Mode",
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/main.py",
             "console": "integratedTerminal",
-            "justMyCode": true,
+            "justMyCode": false,
             "env": {
                 "PYTHONPATH": "${workspaceFolder}"
             }
         },
         {
-            "name": "Python: FastAPI with Uvicorn",
+            "name": "🔥 FastAPI: Development (Auto-reload) [РЕКОМЕНДУЕТСЯ]",
             "type": "debugpy",
             "request": "launch",
             "module": "uvicorn",
@@ -25,10 +25,77 @@
                 "--port",
                 "8000",
                 "--log-level",
-                "info"
+                "debug"
             ],
             "console": "integratedTerminal",
-            "justMyCode": true,
+            "justMyCode": false,
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}",
+                "PYTHONDONTWRITEBYTECODE": "1"
+            },
+            "jinja": true
+        },
+        {
+            "name": "🧪 Test: Whisper STT Module",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/test_stt.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            }
+        },
+        {
+            "name": "🧪 Test: LLM Module",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/test_llm.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            }
+        },
+        {
+            "name": "🧪 Test: TTS Module",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/test_tts.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            }
+        },
+        {
+            "name": "🐛 Debug: Current File",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            }
+        },
+        {
+            "name": "📡 FastAPI: Port 8080",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "uvicorn",
+            "args": [
+                "main:app",
+                "--reload",
+                "--host",
+                "0.0.0.0",
+                "--port",
+                "8080",
+                "--log-level",
+                "debug"
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": false,
             "env": {
                 "PYTHONPATH": "${workspaceFolder}"
             }
