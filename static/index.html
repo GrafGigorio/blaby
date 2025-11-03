@@ -699,9 +699,26 @@
                     // Останавливаем все активные воспроизведения (для случая прерывания)
                     if (currentAudioElements.length > 0 || isPlayingAudio) {
                         console.log('⏹️ Остановка воспроизведений при переходе в listening...');
-                        currentAudioElements.forEach((audioEl) => {
+
+                        // Функция для плавной остановки аудио
+                        const fadeOutAndStop = async (audioEl) => {
                             try {
-                                // Сначала останавливаем воспроизведение
+                                if (!audioEl.paused && audioEl.volume > 0) {
+                                    // Сохраняем начальную громкость
+                                    const initialVolume = audioEl.volume;
+                                    // Быстро снижаем громкость (минимальный fade-out)
+                                    const fadeOutDuration = 10; // 10ms для быстрой остановки
+                                    const steps = 3;
+                                    const stepDuration = fadeOutDuration / steps;
+
+                                    for (let i = steps; i >= 0; i--) {
+                                        audioEl.volume = (i / steps) * initialVolume;
+                                        await new Promise(resolve => setTimeout(resolve, stepDuration));
+                                    }
+                                    audioEl.volume = 0;
+                                }
+
+                                // Останавливаем воспроизведение
                                 if (!audioEl.paused) {
                                     audioEl.pause();
                                 }
@@ -712,7 +729,11 @@
                             } catch (e) {
                                 console.error('❌ Ошибка остановки audio:', e);
                             }
-                        });
+                        };
+
+                        // Применяем плавную остановку ко всем элементам параллельно
+                        await Promise.all(currentAudioElements.map(el => fadeOutAndStop(el)));
+
                         currentAudioElements = [];
                         isPlayingAudio = false;
                         currentAudioChunks = [];
@@ -720,9 +741,7 @@
                         // Останавливаем текущий элемент если есть
                         if (currentPlayingElement) {
                             try {
-                                currentPlayingElement.pause();
-                                currentPlayingElement.src = '';
-                                currentPlayingElement.load();
+                                await fadeOutAndStop(currentPlayingElement);
                             } catch (e) { }
                             currentPlayingElement = null;
                         }
@@ -924,10 +943,76 @@
                     return;
                 }
 
-                // Ждем пока в очереди будут чанки И предыдущий элемент завершился
-                if (playbackQueue.length === 0 || currentPlayingElement) {
+                // Ждем пока в очереди будут чанки
+                if (playbackQueue.length === 0) {
                     await new Promise(resolve => setTimeout(resolve, 100));
                     continue;
+                }
+
+                // КРИТИЧНО: Если есть текущий элемент, СТРОГО ждем его полного завершения
+                // Это гарантирует, что один абзац полностью доиграет до начала следующего
+                if (currentPlayingElement) {
+                    const playingElement = currentPlayingElement; // Сохраняем ссылку
+
+                    // Ждем окончания воспроизведения через Promise
+                    await new Promise((resolve) => {
+                        // Проверяем, не завершен ли элемент уже
+                        if (playingElement.ended) {
+                            console.log('✅ Предыдущий элемент уже завершен');
+                            if (currentPlayingElement === playingElement) {
+                                currentPlayingElement = null;
+                            }
+                            resolve();
+                            return;
+                        }
+
+                        // Ждем события ended с таймаутом на случай проблем
+                        const timeout = setTimeout(() => {
+                            console.log('⏰ Таймаут ожидания завершения предыдущего элемента (возможно уже завершен)');
+                            // Проверяем финальное состояние
+                            if (playingElement.ended) {
+                                console.log('✅ Предыдущий элемент завершен (по таймауту)');
+                            }
+                            if (currentPlayingElement === playingElement) {
+                                currentPlayingElement = null;
+                            }
+                            resolve();
+                        }, 15000); // 15 секунд максимум (для длинных абзацев)
+
+                        // Слушаем событие ended
+                        const onEnded = () => {
+                            clearTimeout(timeout);
+                            console.log('✅ Предыдущий элемент завершен (событие ended), переходим к следующему');
+                            if (currentPlayingElement === playingElement) {
+                                currentPlayingElement = null;
+                            }
+                            resolve();
+                        };
+
+                        // Добавляем обработчик ended
+                        playingElement.addEventListener('ended', onEnded, { once: true });
+
+                        // Также периодически проверяем состояние на случай если событие не сработает
+                        const checkInterval = setInterval(() => {
+                            if (!playingElement || playingElement.ended) {
+                                clearInterval(checkInterval);
+                                clearTimeout(timeout);
+                                console.log('✅ Предыдущий элемент завершен (проверка состояния)');
+                                playingElement.removeEventListener('ended', onEnded);
+                                if (currentPlayingElement === playingElement) {
+                                    currentPlayingElement = null;
+                                }
+                                resolve();
+                            }
+                        }, 100); // Проверяем каждые 100мс
+                    });
+
+                    // Дополнительная проверка после ожидания
+                    if (currentPlayingElement === playingElement) {
+                        // Элемент все еще текущий, но должен был завершиться
+                        console.log('⚠️ Предыдущий элемент все еще активен, принудительно очищаем');
+                        currentPlayingElement = null;
+                    }
                 }
 
                 try {
@@ -1198,11 +1283,28 @@
                         }
 
                         try {
+                            // Плавный старт воспроизведения для устранения щелчков
+                            audioElement.volume = 0; // Начинаем с нулевой громкости
+
                             const playPromise = audioElement.play();
 
                             if (playPromise !== undefined) {
                                 await playPromise;
                                 console.log('▶️ Воспроизведение запущено успешно');
+
+                                // Быстро увеличиваем громкость до максимума
+                                // Используем минимальный fade-in только для устранения щелчка
+                                const fadeInDuration = 15; // 15ms для минимального появления
+                                const steps = 3; // Всего 3 шага для быстроты
+                                const stepDuration = fadeInDuration / steps;
+                                const targetVolume = 0.8; // Увеличиваем до 0.8 для лучшей слышимости
+                                const volumeStep = targetVolume / steps;
+
+                                for (let i = 1; i <= steps; i++) {
+                                    audioElement.volume = i * volumeStep;
+                                    await new Promise(resolve => setTimeout(resolve, stepDuration));
+                                }
+                                audioElement.volume = targetVolume; // Финальная громкость
                             } else {
                                 console.log('▶️ Воспроизведение запущено (без promise)');
                             }
