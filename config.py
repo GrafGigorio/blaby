@@ -24,8 +24,8 @@ DEFAULT_TTS_VOICE_RU = "ru-RU-SvetlanaNeural"
 DEFAULT_TTS_VOICE_EN = "en-US-JennyNeural"
 
 # Настройки Vosk (для потокового распознавания)
-VOSK_MODEL_PATH = BASE_DIR / "models" / "vosk-model-ru-0.42"  # Полная модель для лучшего качества
-# Альтернатива (маленькая модель): "vosk-model-small-ru-0.22"
+VOSK_MODEL_PATH = BASE_DIR / "models" / "vosk-model-ru-0.42"  # Полная модель для лучшего качества (1.5 ГБ)
+# Альтернатива (маленькая модель): "vosk-model-small-ru-0.22" (45 МБ)
 
 # Настройки VAD (Voice Activity Detection)
 SILENCE_THRESHOLD = 1.5  # секунды тишины после речи

@@ -3,9 +3,127 @@ Streaming Speech-to-Text модуль используя Vosk
 """
 import json
 import os
+import urllib.request
+import zipfile
+import shutil
 from pathlib import Path
 from vosk import Model, KaldiRecognizer
-from config import VOSK_MODEL_PATH
+from config import VOSK_MODEL_PATH, BASE_DIR
+
+
+def download_vosk_model(model_name="vosk-model-small-ru-0.22", models_dir=None):
+    """
+    Автоматически скачивает и распаковывает модель Vosk
+
+    Args:
+        model_name: имя модели для скачивания
+        models_dir: директория для моделей (по умолчанию BASE_DIR / "models")
+
+    Returns:
+        Path: путь к распакованной модели
+
+    Raises:
+        Exception: если не удалось скачать или распаковать модель
+    """
+    if models_dir is None:
+        models_dir = BASE_DIR / "models"
+
+    models_dir.mkdir(exist_ok=True)
+
+    model_path = models_dir / model_name
+
+    # Если модель уже существует, возвращаем путь
+    if model_path.exists():
+        return model_path
+
+    print(f"📥 Модель {model_name} не найдена. Начинаем загрузку...")
+
+    # URL модели
+    model_url = f"https://alphacephei.com/vosk/models/{model_name}.zip"
+    zip_path = models_dir / f"{model_name}.zip"
+
+    try:
+        # Скачиваем архив
+        print(f"Скачивание из {model_url}...")
+        print("Это может занять несколько минут (размер ~45 МБ для small, ~1.5 ГБ для full)...")
+
+        def show_progress(block_num, block_size, total_size):
+            downloaded = block_num * block_size
+            percent = min(downloaded * 100 / total_size, 100) if total_size > 0 else 0
+            print(f"\rПрогресс: {percent:.1f}%", end='', flush=True)
+
+        urllib.request.urlretrieve(model_url, zip_path, show_progress)
+        print("\n✅ Загрузка завершена")
+
+        # Распаковываем
+        print(f"📦 Распаковка {model_name}.zip...")
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            zip_ref.extractall(models_dir)
+        print("✅ Распаковка завершена")
+
+        # Удаляем архив
+        zip_path.unlink()
+
+        # Проверяем что модель распаковалась
+        if not model_path.exists():
+            raise FileNotFoundError(f"Модель не была распакована в {model_path}")
+
+        print(f"✅ Модель {model_name} успешно установлена в {model_path}")
+        return model_path
+
+    except Exception as e:
+        # Очищаем частично скачанные файлы
+        if zip_path.exists():
+            zip_path.unlink()
+        if model_path.exists():
+            shutil.rmtree(model_path, ignore_errors=True)
+        raise Exception(f"Не удалось скачать модель: {e}")
+
+
+def find_available_vosk_model(preferred_path=None, models_dir=None):
+    """
+    Находит доступную модель Vosk, при необходимости скачивает указанную модель
+
+    Args:
+        preferred_path: предпочтительный путь к модели (из config)
+        models_dir: директория для моделей
+
+    Returns:
+        Path: путь к доступной модели
+    """
+    if models_dir is None:
+        models_dir = BASE_DIR / "models"
+
+    # Сначала проверяем предпочтительную модель
+    if preferred_path and preferred_path.exists():
+        return preferred_path
+
+    # Если предпочтительной модели нет, пытаемся скачать её
+    if preferred_path:
+        model_name = preferred_path.name
+        print(f"⚠️  Указанная модель {model_name} не найдена")
+        print(f"📥 Автоматически скачиваем указанную модель {model_name}...")
+        try:
+            return download_vosk_model(model_name, models_dir)
+        except Exception as e:
+            print(f"❌ Не удалось скачать указанную модель {model_name}: {e}")
+            print("ℹ️  Пытаемся использовать альтернативную модель...")
+            # Если скачивание не удалось, используем альтернативу как fallback
+            pass
+
+    # Fallback: проверяем альтернативные модели (сначала маленькая, потом большая)
+    alternative_models = ["vosk-model-small-ru-0.22", "vosk-model-ru-0.42"]
+
+    for model_name in alternative_models:
+        model_path = models_dir / model_name
+        if model_path.exists():
+            print(f"ℹ️  Используем найденную альтернативную модель {model_name}")
+            return model_path
+
+    # Если ничего не найдено и нет предпочтительной, скачиваем маленькую модель
+    print("⚠️  Ни одна модель Vosk не найдена")
+    print(f"📥 Автоматически скачиваем vosk-model-small-ru-0.22...")
+    return download_vosk_model("vosk-model-small-ru-0.22", models_dir)
 
 
 class StreamingSTTModule:
@@ -20,14 +138,9 @@ class StreamingSTTModule:
         if model_path is None:
             model_path = VOSK_MODEL_PATH
 
+        # Автоматически находим или скачиваем модель, если её нет
         if not os.path.exists(model_path):
-            raise FileNotFoundError(
-                f"Модель Vosk не найдена по пути: {model_path}\n"
-                f"Скачайте модель с https://alphacephei.com/vosk/models\n"
-                f"Рекомендуется: vosk-model-ru-0.42 (1.5 ГБ) для лучшего качества\n"
-                f"Или: vosk-model-small-ru-0.22 (45 МБ) для быстрой работы\n"
-                f"Распакуйте в: {model_path.parent}/"
-            )
+            model_path = find_available_vosk_model(preferred_path=model_path)
 
         print(f"Загрузка Vosk модели из {model_path}...")
         print(f"Размер модели: {model_path.name}")
