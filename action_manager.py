@@ -93,6 +93,16 @@ class ActionManager:
   "response_text": "текст для озвучивания пользователю (БЕЗ JSON, просто обычный текст)"
 }}
 
+КРИТИЧЕСКИ ВАЖНО - ФОРМАТ ОТВЕТА:
+Весь JSON должен быть обернут в специальные маркеры технической информации:
+<TECH>
+{{ JSON здесь }}
+</TECH>
+А текст для озвучивания должен быть ВНЕ этих маркеров.
+
+Пример правильного ответа:
+Конечно! Я могу помочь вам подключить интернет. <TECH>{{"action":"internet_connection","stage":"city_selection","data":{{"city":null,"tariff":null,"name":null,"phone":null,"address":null}},"response_text":"В каком городе вы хотите подключить интернет?"}}</TECH> В каком городе вы хотите подключить интернет?
+
 ПРАВИЛА РАБОТЫ:
 1. Если пользователь хочет подключить интернет, устанавливай action: "internet_connection"
 2. Этапы работы:
@@ -101,6 +111,7 @@ class ActionManager:
    - contact_info: после выбора тарифа спрашивай контактные данные (имя, телефон, адрес)
 3. Всегда обновляй поля data в JSON с полученными данными от пользователя
 4. В response_text пиши только текст для озвучивания, БЕЗ упоминания JSON
+5. ВСЕГДА оборачивай JSON в <TECH>...</TECH> маркеры, чтобы он не озвучивался
 
 ДОСТУПНЫЕ ТАРИФЫ:
 {tariffs_info}
@@ -119,42 +130,77 @@ class ActionManager:
             - parsed_data: распарсенный JSON объект или None
             - cleaned_text: текст без JSON для TTS
         """
-        # Пытаемся найти JSON в тексте
-        # JSON может быть в фигурных скобках {...}
-        json_pattern = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}'
-        matches = re.findall(json_pattern, text, re.DOTALL)
+        # Сначала пытаемся найти JSON в технических маркерах <TECH>...</TECH>
+        tech_pattern = r'<TECH>(.*?)</TECH>'
+        tech_matches = re.findall(tech_pattern, text, re.DOTALL | re.IGNORECASE)
         
         parsed_data = None
         cleaned_text = text
         
-        for match in matches:
-            try:
-                # Пытаемся распарсить JSON
-                data = json.loads(match)
-                if isinstance(data, dict) and "response_text" in data:
-                    parsed_data = data
-                    # Заменяем JSON на текст для озвучивания
-                    cleaned_text = data.get("response_text", text)
-                    # Удаляем JSON из текста, если он там остался
-                    cleaned_text = re.sub(re.escape(match), "", cleaned_text, flags=re.DOTALL).strip()
-                    break
-            except json.JSONDecodeError:
-                continue
+        # Пытаемся распарсить JSON из технических блоков
+        for tech_content in tech_matches:
+            # Ищем JSON внутри технического блока
+            json_pattern = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}'
+            json_matches = re.findall(json_pattern, tech_content, re.DOTALL)
+            
+            for match in json_matches:
+                try:
+                    # Пытаемся распарсить JSON
+                    data = json.loads(match)
+                    if isinstance(data, dict) and "response_text" in data:
+                        parsed_data = data
+                        # Заменяем JSON на текст для озвучивания
+                        cleaned_text = data.get("response_text", cleaned_text)
+                        # Удаляем весь технический блок из текста
+                        cleaned_text = re.sub(r'<TECH>.*?</TECH>', '', cleaned_text, flags=re.DOTALL | re.IGNORECASE)
+                        break
+                except json.JSONDecodeError:
+                    continue
+            
+            if parsed_data:
+                break
+        
+        # Если JSON не найден в технических блоках, пытаемся найти его в тексте напрямую
+        if parsed_data is None:
+            # JSON может быть в фигурных скобках {...}
+            json_pattern = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}'
+            matches = re.findall(json_pattern, cleaned_text, re.DOTALL)
+            
+            for match in matches:
+                try:
+                    # Пытаемся распарсить JSON
+                    data = json.loads(match)
+                    if isinstance(data, dict) and "response_text" in data:
+                        parsed_data = data
+                        # Заменяем JSON на текст для озвучивания
+                        cleaned_text = data.get("response_text", cleaned_text)
+                        # Удаляем JSON из текста, если он там остался
+                        cleaned_text = re.sub(re.escape(match), "", cleaned_text, flags=re.DOTALL).strip()
+                        break
+                except json.JSONDecodeError:
+                    continue
         
         # Если JSON не найден, пытаемся найти его в многострочном формате
         if parsed_data is None:
             # Ищем JSON между ```json и ``` или просто в фигурных скобках
             json_block_pattern = r'```(?:json)?\s*(\{.*?\})\s*```'
-            json_block_match = re.search(json_block_pattern, text, re.DOTALL)
+            json_block_match = re.search(json_block_pattern, cleaned_text, re.DOTALL)
             if json_block_match:
                 try:
                     data = json.loads(json_block_match.group(1))
                     if isinstance(data, dict) and "response_text" in data:
                         parsed_data = data
-                        cleaned_text = data.get("response_text", text)
+                        cleaned_text = data.get("response_text", cleaned_text)
                         cleaned_text = re.sub(re.escape(json_block_match.group(0)), "", cleaned_text, flags=re.DOTALL).strip()
                 except json.JSONDecodeError:
                     pass
+        
+        # ВАЖНО: Удаляем все оставшиеся технические блоки, даже если они не содержат JSON
+        # Это гарантирует, что никакая техническая информация не попадет в TTS
+        cleaned_text = re.sub(r'<TECH>.*?</TECH>', '', cleaned_text, flags=re.DOTALL | re.IGNORECASE)
+        # Удаляем незакрытые теги (на случай если они разорваны потоковой передачей)
+        cleaned_text = re.sub(r'<TECH>.*', '', cleaned_text, flags=re.DOTALL | re.IGNORECASE)
+        cleaned_text = re.sub(r'.*?</TECH>', '', cleaned_text, flags=re.DOTALL | re.IGNORECASE)
         
         return parsed_data, cleaned_text
     

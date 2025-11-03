@@ -33,6 +33,7 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 def clean_text_from_markdown(text: str) -> str:
     """
     Очищает текст от markdown форматирования (звездочки, подчеркивания и т.д.)
+    и технической информации между маркерами <TECH>...</TECH>
     ВАЖНО: Сохраняет ВСЕ пробелы между словами и добавляет пробелы там, где они нужны.
     
     Args:
@@ -43,6 +44,14 @@ def clean_text_from_markdown(text: str) -> str:
     """
     if not text:
         return text
+    
+    # ВАЖНО: Сначала удаляем технические блоки между маркерами <TECH>...</TECH>
+    # Это позволяет исключить JSON и другую техническую информацию из озвучки
+    # Поддерживаем как полные теги <TECH>...</TECH>, так и открывающие/закрывающие отдельно
+    text = re.sub(r'<TECH>.*?</TECH>', '', text, flags=re.DOTALL | re.IGNORECASE)
+    # Удаляем незакрытые теги (на случай если они разорваны потоковой передачей)
+    text = re.sub(r'<TECH>.*', '', text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r'.*?</TECH>', '', text, flags=re.DOTALL | re.IGNORECASE)
     
     # Удаляем символы форматирования, заменяя их на пробел если они между буквами
     # Это предотвращает склеивание слов: "слово*слово" -> "слово слово"
@@ -348,6 +357,77 @@ def get_system_prompt_for_action(action_manager: ActionManager) -> str:
     return action_manager.get_system_prompt()
 
 
+async def send_greeting_directly(websocket, state, generation_interrupted, tts_module, llm_module=None):
+    """
+    Отправляет приветствие напрямую, без ожидания LLM
+    
+    Args:
+        websocket: WebSocket соединение
+        state: StateManager для управления состоянием
+        generation_interrupted: Event для проверки прерывания
+        tts_module: TTSModule для синтеза речи
+        llm_module: LLMModule для сохранения истории (опционально)
+    """
+    try:
+        greeting_text = "Здравствуйте! Меня зовут Ася, я работаю в телеком компании. Чем могу помочь?"
+        
+        print("👋 Отправка приветствия напрямую...")
+        
+        # Отправляем начало потока
+        await websocket.send_json({
+            "type": "stream_start"
+        })
+        
+        # Сразу отправляем текст приветствия для отображения
+        await websocket.send_json({
+            "type": "text_chunk",
+            "text": greeting_text
+        })
+        
+        # Очищаем текст от markdown и спецсимволов
+        cleaned_greeting = clean_text_from_markdown(greeting_text)
+        
+        # Синтезируем речь и отправляем аудио чанки
+        chunk_count = 0
+        async for audio_chunk in tts_module.synthesize_stream(cleaned_greeting, language="ru"):
+            # Проверяем прерывание
+            if generation_interrupted.is_set():
+                print("⚠️ Приветствие прервано!")
+                return
+            
+            chunk_count += 1
+            audio_base64 = base64.b64encode(audio_chunk).decode('utf-8')
+            await websocket.send_json({
+                "type": "audio_chunk",
+                "data": audio_base64
+            })
+        
+        print(f"✅ Приветствие отправлено, отправлено {chunk_count} аудио чанков")
+        
+        # Отправляем конец потока
+        await websocket.send_json({
+            "type": "stream_end",
+            "text": greeting_text
+        })
+        
+        # Сохраняем приветствие в историю StateManager и LLM (для контекста)
+        # Добавляем как сообщение ассистента в историю
+        # Это нужно для того, чтобы LLM знал, что приветствие уже было отправлено
+        state.add_to_history("assistant", greeting_text)
+        # Также добавляем в историю LLM модуля
+        if llm_module:
+            llm_module.conversation_history.append({
+                "role": "assistant",
+                "content": greeting_text
+            })
+        
+    except Exception as e:
+        print(f"❌ Ошибка отправки приветствия: {e}")
+        import traceback
+        traceback.print_exc()
+        raise
+
+
 async def generate_and_send_response(websocket, final_text, state, generation_interrupted, action_manager: ActionManager = None, system_prompt_override: str = None):
     """Генерирует ответ AI и отправляет клиенту с проверкой прерывания"""
     try:
@@ -598,42 +678,22 @@ async def websocket_voice_endpoint(websocket: WebSocket):
                     "state": "listening"
                 })
                 
-                # Автоматическое приветствие от Аси
+                # Автоматическое приветствие от Аси - отправляем напрямую, без ожидания LLM
                 if not greeting_sent:
-                    print("👋 Отправка приветствия от Аси...")
+                    print("👋 Отправка приветствия от Аси напрямую...")
                     greeting_sent = True
-                    # Генерируем приветствие без пользовательского ввода
-                    greeting_text = ""  # Пустой текст - это триггер для приветствия
-                    state.start_processing()
-                    await websocket.send_json({
-                        "type": "state",
-                        "state": "processing"
-                    })
+                    
+                    # Переходим в состояние speaking
                     state.start_speaking()
                     await websocket.send_json({
                         "type": "state",
                         "state": "speaking"
                     })
                     generation_interrupted.clear()
-                    # Используем специальный промпт для приветствия (без JSON)
-                    greeting_prompt = """Ты - Ася, голосовой ассистент телеком компании. Ты работаешь в компании, которая предоставляет услуги интернета.
-
-ВАЖНО: Это ПЕРВОЕ сообщение для нового клиента. Поприветствуй его как Ася. Скажи: "Здравствуйте! Меня зовут Ася, я работаю в телеком компании. Чем могу помочь?"
-
-НЕ возвращай JSON в этом сообщении, просто поприветствуй клиента обычным текстом. Будь дружелюбной и профессиональной."""
-                    # Генерируем приветствие
+                    
+                    # Отправляем приветствие напрямую, без LLM
                     try:
-                        greeting_task = asyncio.create_task(
-                            generate_and_send_response(
-                                websocket, 
-                                "Привет", 
-                                state, 
-                                generation_interrupted, 
-                                action_manager,
-                                system_prompt_override=greeting_prompt
-                            )
-                        )
-                        await greeting_task
+                        await send_greeting_directly(websocket, state, generation_interrupted, tts_module, llm_module)
                     except Exception as greeting_error:
                         print(f"❌ Ошибка приветствия: {greeting_error}")
                         import traceback
