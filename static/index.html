@@ -239,6 +239,49 @@
             color: white;
         }
 
+        .secondary-controls {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .secondary-btn {
+            padding: 10px 20px;
+            font-size: 14px;
+            font-weight: 600;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            background: #e0e0e0;
+            color: #333;
+        }
+
+        .secondary-btn:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 3px 10px rgba(0, 0, 0, 0.15);
+        }
+
+        .secondary-btn:active:not(:disabled) {
+            transform: translateY(0);
+        }
+
+        .secondary-btn.disabled {
+            background: #ff9800;
+            color: white;
+        }
+
+        .mic-btn.disabled {
+            background: #f44336;
+            color: white;
+        }
+
+        .audio-btn.disabled {
+            background: #9e9e9e;
+            color: white;
+        }
+
         /* Промежуточный текст */
         .partial-container {
             background: #f5f5f5;
@@ -509,6 +552,17 @@
                 </button>
             </div>
 
+            <div class="secondary-controls" style="display: none;">
+                <button id="micToggleBtn" onclick="toggleMicrophone()" class="secondary-btn mic-btn"
+                    title="Отключить/включить микрофон">
+                    🎤 Микрофон
+                </button>
+                <button id="audioToggleBtn" onclick="toggleAudio()" class="secondary-btn audio-btn"
+                    title="Отключить/включить звук">
+                    🔊 Звук
+                </button>
+            </div>
+
             <!-- Промежуточный текст -->
             <div id="partialContainer" class="partial-container">
                 <div class="partial-label">Распознаётся...</div>
@@ -592,6 +646,8 @@
         const MIN_SPEECH_DURATION = 300; // Минимальная длительность речи
         let interruptSpeechStart = null; // Время начала речи для прерывания
         let interruptLastDetected = null; // Время последнего обнаружения звука выше порога
+        let hasRecognizedText = false; // Флаг наличия распознанного текста во время текущей речи
+        let isInterrupting = false; // Флаг активного прерывания (когда пользователь прерывает воспроизведение)
 
         const statusDiv = document.getElementById('status');
         const conversationDiv = document.getElementById('conversation');
@@ -602,6 +658,13 @@
         const playbackVisualizerContainer = document.getElementById('playbackVisualizerContainer');
         const startBtn = document.getElementById('startBtn');
         const stopBtn = document.getElementById('stopBtn');
+        const micToggleBtn = document.getElementById('micToggleBtn');
+        const audioToggleBtn = document.getElementById('audioToggleBtn');
+        const secondaryControls = document.querySelector('.secondary-controls');
+
+        // Флаги состояния
+        let isMicrophoneEnabled = true; // Микрофон включен по умолчанию
+        let isAudioEnabled = true; // Звук включен по умолчанию
 
         // Переменные для эквалайзера воспроизведения
         let playbackAnalyser = null;
@@ -793,6 +856,11 @@
                         showPartialTranscript(data.text);
                         break;
                     case 'final_transcript':
+                        // Отмечаем, что был распознан финальный текст
+                        if (data.text && data.text.trim().length > 0) {
+                            hasRecognizedText = true;
+                            console.log('✅ Распознан финальный текст:', data.text);
+                        }
                         addMessage('user', data.text);
                         hidePartialTranscript();
                         break;
@@ -850,9 +918,11 @@
                     interruptSpeechStart = null;
                     interruptLastDetected = null;
 
-                    // Останавливаем все активные воспроизведения (для случая прерывания)
-                    if (currentAudioElements.length > 0 || isPlayingAudio) {
-                        console.log('⏹️ Остановка воспроизведений при переходе в listening...');
+                    // Останавливаем все активные воспроизведения ТОЛЬКО при прерывании
+                    // При нормальном окончании воспроизведение должно завершиться естественным образом
+                    if (isInterrupting && (currentAudioElements.length > 0 || isPlayingAudio)) {
+                        console.log('⏹️ Остановка воспроизведений при переходе в listening (прерывание)...');
+                        isInterrupting = false; // Сбрасываем флаг после использования
 
                         // Функция для плавной остановки аудио
                         const fadeOutAndStop = async (audioEl) => {
@@ -899,9 +969,18 @@
                             } catch (e) { }
                             currentPlayingElement = null;
                         }
+                    } else if (currentAudioElements.length > 0 || isPlayingAudio) {
+                        // При нормальном переходе в listening не останавливаем воспроизведение
+                        // Оно завершится естественным образом и отправит speaking_finished
+                        console.log('ℹ️ Воспроизведение продолжается, ожидаем естественного окончания...');
+                        isInterrupting = false; // Сбрасываем флаг на всякий случай
+                    } else {
+                        isInterrupting = false; // Сбрасываем флаг если нет активного воспроизведения
                     }
 
-                    // Возобновляем VAD и запись
+                    // Возобновляем VAD, но НЕ начинаем запись если идет воспроизведение
+                    // VAD нужен для детекции речи пользователя, но во время воспроизведения
+                    // запись не должна начинаться (чтобы не записывать воспроизведение ассистента)
                     if (!vadCheckInterval) {
                         vadCheckInterval = setInterval(checkVoiceActivity, 100);
                         console.log('✅ VAD активирован');
@@ -920,6 +999,12 @@
                         silenceStart = null;
                         speechStart = null;
                         interruptSpeechStart = null; // Сбрасываем счетчик прерывания
+                        hasRecognizedText = false; // Сбрасываем флаг распознанного текста
+
+                        // НЕ начинаем запись если идет воспроизведение - ждем его окончания
+                        if (isPlayingAudio || currentAudioChunks.length > 0 || processAudioChunksPromise) {
+                            console.log('⏸️ Воспроизведение активно, запись не начинаем - ждем окончания');
+                        }
                     }
                     break;
                 case 'processing':
@@ -958,9 +1043,12 @@
 
         // Отображение промежуточного текста
         function showPartialTranscript(text) {
-            if (text) {
+            if (text && text.trim().length > 0) {
                 partialText.textContent = text;
                 // Контейнер всегда видим, просто обновляем текст
+                // Отмечаем, что был распознан текст (даже если это частичный результат)
+                hasRecognizedText = true;
+                console.log('✅ Распознан текст:', text);
             }
         }
 
@@ -971,6 +1059,8 @@
 
         // Обработка начала потокового ответа
         function handleStreamStart() {
+            // Сбрасываем флаг прерывания при начале нового потока
+            isInterrupting = false;
             console.log('🔄 Начало потокового ответа');
             const emptyState = conversationDiv.querySelector('.empty-state');
             if (emptyState) emptyState.remove();
@@ -979,7 +1069,7 @@
             currentStreamingMessage = document.createElement('div');
             currentStreamingMessage.className = 'message assistant';
             currentStreamingMessage.innerHTML = `
-                <div class="message-label">🤖 Ассистент</div>
+                <div class="message-label">👩 АСЯ</div>
                 <div class="message-text streaming-text"></div>
             `;
             conversationDiv.appendChild(currentStreamingMessage);
@@ -1451,7 +1541,7 @@
                                 const fadeInDuration = 15; // 15ms для минимального появления
                                 const steps = 3; // Всего 3 шага для быстроты
                                 const stepDuration = fadeInDuration / steps;
-                                const targetVolume = 0.8; // Увеличиваем до 0.8 для лучшей слышимости
+                                const targetVolume = isAudioEnabled ? 0.8 : 0; // Учитываем состояние звука
                                 const volumeStep = targetVolume / steps;
 
                                 for (let i = 1; i <= steps; i++) {
@@ -1666,7 +1756,7 @@
 
             let content = `
                 <div class="message-label">
-                    ${role === 'user' ? '👤 Вы' : '🤖 Ассистент'}
+                    ${role === 'user' ? '👤 Вы' : '👩 АСЯ'}
                 </div>
                 <div class="message-text">${text}</div>
             `;
@@ -1875,6 +1965,7 @@
                             }
 
                             // Отправляем interrupt на сервер
+                            isInterrupting = true; // Устанавливаем флаг прерывания
                             if (ws && ws.readyState === WebSocket.OPEN) {
                                 ws.send(JSON.stringify({ type: 'interrupt' }));
                                 console.log('📤 Отправлен interrupt на сервер');
@@ -1887,6 +1978,8 @@
                             isSpeaking = true;
                             speechStart = now;
                             silenceStart = null;
+                            // Сбрасываем флаг распознанного текста при начале новой речи
+                            hasRecognizedText = false;
 
                             // Запускаем запись сразу
                             await startAudioRecording();
@@ -1914,13 +2007,64 @@
             }
 
             // Обычная логика детекции речи (для состояния listening)
+            // ВАЖНО: Не начинаем запись если идет воспроизведение аудио ассистента
+            // Это предотвращает запись воспроизведения как речи пользователя
+            // НО: прерывание обрабатывается выше (в состоянии speaking), здесь только listening
             if (volumePercent > SPEECH_THRESHOLD) {
                 // Детектирована речь
                 if (!isSpeaking) {
+                    // СПЕЦИАЛЬНЫЙ СЛУЧАЙ: Если мы в listening но воспроизведение еще идет
+                    // (редкий случай, когда сервер перевел в listening до окончания воспроизведения)
+                    // И детектируется громкая речь (выше порога прерывания) - это может быть прерывание
+                    const isPlaybackActive = isPlayingAudio || currentAudioChunks.length > 0 || processAudioChunksPromise;
+                    if (isPlaybackActive && volumePercent > INTERRUPT_THRESHOLD) {
+                        // Детектирована громкая речь во время воспроизведения - вероятно прерывание
+                        console.log('⚠️ Обнаружена громкая речь во время воспроизведения в listening (громкость:', volumePercent, '%), останавливаем воспроизведение');
+
+                        // Останавливаем воспроизведение
+                        if (currentPlayingElement) {
+                            try {
+                                currentPlayingElement.pause();
+                                currentPlayingElement.src = '';
+                                currentPlayingElement.load();
+                            } catch (e) { }
+                            currentPlayingElement = null;
+                        }
+                        currentAudioElements.forEach((audioEl) => {
+                            try {
+                                if (!audioEl.paused) audioEl.pause();
+                                audioEl.src = '';
+                                audioEl.load();
+                            } catch (e) { }
+                        });
+                        currentAudioElements = [];
+                        isPlayingAudio = false;
+                        currentAudioChunks = [];
+                        processAudioChunksPromise = null;
+
+                        // Теперь начинаем запись речи пользователя
+                        console.log('🎤 Начало речи (после остановки воспроизведения, громкость:', volumePercent, '%)');
+                        isSpeaking = true;
+                        speechStart = now;
+                        silenceStart = null;
+                        hasRecognizedText = false;
+                        await startAudioRecording();
+                        return;
+                    }
+
+                    // ОБЫЧНЫЙ СЛУЧАЙ: Если активно воспроизведение, но речь недостаточно громкая
+                    // Игнорируем детекцию (это скорее всего воспроизведение ассистента)
+                    if (isPlaybackActive) {
+                        console.log('🔇 Игнорируем детекцию речи во время воспроизведения (громкость:', volumePercent, '%, состояние:', currentState, ')');
+                        return; // Игнорируем детекцию, не начинаем запись
+                    }
+
                     console.log('🎤 Начало речи (громкость:', volumePercent, '%)');
                     isSpeaking = true;
                     speechStart = now;
                     silenceStart = null;
+                    // Сбрасываем флаг распознанного текста при начале новой речи
+                    hasRecognizedText = false;
 
                     // Нормальное начало речи в состоянии listening
                     await startAudioRecording();
@@ -1940,17 +2084,29 @@
 
                         // Если тишина длится достаточно долго и речь была достаточно долгой
                         if (silenceDuration >= SILENCE_DURATION && speechDuration >= MIN_SPEECH_DURATION) {
-                            console.log('✅ Конец фразы (речь:', speechDuration, 'мс, тишина:', silenceDuration, 'мс)');
-                            isSpeaking = false;
-                            silenceStart = null;
-                            speechStart = null;
+                            // Проверяем, был ли распознан текст - отправляем speech_end только если есть распознанные слова
+                            if (hasRecognizedText) {
+                                console.log('✅ Конец фразы (речь:', speechDuration, 'мс, тишина:', silenceDuration, 'мс) - текст распознан');
+                                isSpeaking = false;
+                                silenceStart = null;
+                                speechStart = null;
+                                hasRecognizedText = false; // Сбрасываем флаг
 
-                            stopAudioRecording();
-                            if (ws && ws.readyState === WebSocket.OPEN) {
-                                ws.send(JSON.stringify({ type: 'speech_end' }));
-                                console.log('📤 Отправлен speech_end на сервер');
+                                stopAudioRecording();
+                                if (ws && ws.readyState === WebSocket.OPEN) {
+                                    ws.send(JSON.stringify({ type: 'speech_end' }));
+                                    console.log('📤 Отправлен speech_end на сервер');
+                                } else {
+                                    console.error('❌ WebSocket не готов для отправки speech_end, состояние:', ws ? ws.readyState : 'null');
+                                }
                             } else {
-                                console.error('❌ WebSocket не готов для отправки speech_end, состояние:', ws ? ws.readyState : 'null');
+                                // Нет распознанного текста - это был просто шум, игнорируем
+                                console.log('⚠️ Конец фразы обнаружен, но текст не распознан - игнорируем (речь:', speechDuration, 'мс, тишина:', silenceDuration, 'мс)');
+                                // Сбрасываем состояние, чтобы не отправлять speech_end
+                                isSpeaking = false;
+                                silenceStart = null;
+                                speechStart = null;
+                                stopAudioRecording();
                             }
                         }
                     }
@@ -1969,6 +2125,13 @@
                         sampleRate: 16000
                     }
                 });
+
+                // Устанавливаем начальное состояние микрофона
+                if (mediaStream) {
+                    mediaStream.getAudioTracks().forEach(track => {
+                        track.enabled = isMicrophoneEnabled;
+                    });
+                }
 
                 // Визуализатор (также используется для VAD)
                 setupVisualizer(mediaStream);
@@ -2040,11 +2203,17 @@
             isSpeaking = false;
             silenceStart = null;
             speechStart = null;
+            // НЕ сбрасываем hasRecognizedText здесь - он может быть нужен для проверки перед отправкой speech_end
         }
 
         // Конвертация Float32Array в Int16Array и отправка
         function sendPCMAudioChunk(float32Array) {
             if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+            // Проверяем, включен ли микрофон
+            if (!isMicrophoneEnabled) {
+                return; // Не отправляем аудио если микрофон отключен
+            }
 
             // Конвертируем Float32 [-1.0, 1.0] в Int16 [-32768, 32767]
             const int16Array = new Int16Array(float32Array.length);
@@ -2137,6 +2306,13 @@
                 isDialogActive = true;
                 startBtn.style.display = 'none';
                 stopBtn.style.display = 'inline-block';
+                secondaryControls.style.display = 'flex';
+
+                // Сбрасываем состояние кнопок при запуске
+                isMicrophoneEnabled = true;
+                isAudioEnabled = true;
+                micToggleBtn.classList.remove('disabled');
+                audioToggleBtn.classList.remove('disabled');
 
                 updateStatus('🔄 Подключение...', 'idle');
 
@@ -2159,6 +2335,7 @@
             isDialogActive = false;
             startBtn.style.display = 'inline-block';
             stopBtn.style.display = 'none';
+            secondaryControls.style.display = 'none';
 
             // Останавливаем все активные воспроизведения аудио
             console.log('⏹️ Остановка всех воспроизведений...');
@@ -2244,6 +2421,71 @@
             stopVisualizer();
             hidePartialTranscript();
             updateStatus('✅ Готов к работе', 'idle');
+        }
+
+        // Переключение микрофона
+        function toggleMicrophone() {
+            isMicrophoneEnabled = !isMicrophoneEnabled;
+
+            if (mediaStream) {
+                // Включаем/выключаем все аудио треки
+                mediaStream.getAudioTracks().forEach(track => {
+                    track.enabled = isMicrophoneEnabled;
+                });
+            }
+
+            // Обновляем внешний вид кнопки
+            if (isMicrophoneEnabled) {
+                micToggleBtn.classList.remove('disabled');
+                micToggleBtn.textContent = '🎤 Микрофон';
+                console.log('✅ Микрофон включен');
+            } else {
+                micToggleBtn.classList.add('disabled');
+                micToggleBtn.textContent = '🔇 Микрофон';
+                console.log('🔇 Микрофон отключен');
+
+                // Останавливаем текущую запись если она активна
+                if (isSpeaking) {
+                    stopAudioRecording();
+                    isSpeaking = false;
+                    silenceStart = null;
+                    speechStart = null;
+                }
+            }
+        }
+
+        // Переключение звука
+        function toggleAudio() {
+            isAudioEnabled = !isAudioEnabled;
+
+            // Обновляем громкость всех активных аудио элементов
+            const targetVolume = isAudioEnabled ? 0.8 : 0;
+
+            // Обновляем текущий воспроизводимый элемент
+            if (currentPlayingElement) {
+                currentPlayingElement.volume = targetVolume;
+            }
+
+            // Обновляем все элементы в массиве
+            currentAudioElements.forEach(audioEl => {
+                audioEl.volume = targetVolume;
+            });
+
+            // Обновляем все audio элементы на странице
+            document.querySelectorAll('audio').forEach(audioEl => {
+                audioEl.volume = targetVolume;
+            });
+
+            // Обновляем внешний вид кнопки
+            if (isAudioEnabled) {
+                audioToggleBtn.classList.remove('disabled');
+                audioToggleBtn.textContent = '🔊 Звук';
+                console.log('✅ Звук включен');
+            } else {
+                audioToggleBtn.classList.add('disabled');
+                audioToggleBtn.textContent = '🔇 Звук';
+                console.log('🔇 Звук отключен');
+            }
         }
 
         // Горячая клавиша: Space
