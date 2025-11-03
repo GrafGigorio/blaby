@@ -62,6 +62,11 @@ def clean_text_from_markdown(text: str) -> str:
     text = re.sub(r'\s*`+\s*', ' ', text)  # С кавычками вокруг -> пробел
     text = re.sub(r'`+', '', text)  # Остальные кавычки удаляем
     
+    # Наклонные черты: удаляем полностью (TTS произносит их как "наклонная черта")
+    text = re.sub(r'(\S)[/\\]+(\S)', r'\1 \2', text)  # Между буквами -> пробел
+    text = re.sub(r'\s*[/\\]+\s*', ' ', text)  # Со слешами вокруг -> пробел
+    text = re.sub(r'[/\\]+', '', text)  # Остальные слеши удаляем
+    
     # Удаляем квадратные скобки ссылок [текст](url), заменяем только на текст
     text = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', text)
     
@@ -250,7 +255,9 @@ async def voice_chat(audio: UploadFile = File(...)):
         # Синтезируем речь
         print("[4] Синтез речи...")
         output_audio_path = OUTPUT_DIR / f"output_{timestamp}.wav"
-        success = await tts_module.synthesize_async(ai_response, str(output_audio_path), language="ru")
+        # Очищаем текст от markdown и спецсимволов перед синтезом
+        cleaned_response = clean_text_from_markdown(ai_response)
+        success = await tts_module.synthesize_async(cleaned_response, str(output_audio_path), language="ru")
 
         if not success or not output_audio_path.exists():
             raise HTTPException(status_code=500, detail="Ошибка синтеза речи")
