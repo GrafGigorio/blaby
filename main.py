@@ -327,6 +327,157 @@ async def set_model(model_data: dict):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+async def generate_and_send_response(websocket, final_text, state, generation_interrupted):
+    """Генерирует ответ AI и отправляет клиенту с проверкой прерывания"""
+    try:
+        # Начинаем потоковую генерацию ответа
+        print("🤖 Начало потоковой генерации ответа...")
+        
+        full_response = ""
+        text_buffer = ""
+        
+        # Отправляем начало потока
+        await websocket.send_json({
+            "type": "stream_start"
+        })
+        
+        # Потоковая генерация от LLM и TTS с проверкой прерывания
+        chunk_num = 0
+        async for text_chunk in llm_module.generate_response_stream(final_text, system_prompt=None):
+            # Проверяем флаг прерывания
+            if generation_interrupted.is_set():
+                print("⚠️ Генерация прервана!")
+                return
+            
+            chunk_num += 1
+            # Логируем оригинальный чанк для отладки
+            print(f"📝 Оригинальный чанк от LLM #{chunk_num}: '{text_chunk}' (длина: {len(text_chunk)})")
+            
+            # Передаем текст как есть, без изменений
+            full_response += text_chunk
+            text_buffer += text_chunk
+            
+            # Отправляем текстовый чанк для отображения
+            if text_chunk:  # Отправляем только если есть текст
+                await websocket.send_json({
+                    "type": "text_chunk",
+                    "text": text_chunk
+                })
+            
+            # Накопляем текст до предложения (до точки, восклицательного или вопросительного знака)
+            # или до определенного размера (200 символов для лучшего качества TTS)
+            if len(text_buffer) >= 200 or any(punct in text_buffer for punct in ['.', '!', '?', '。']):
+                # Находим границу предложения
+                sentence_end = -1
+                for punct in ['.', '!', '?', '。']:
+                    pos = text_buffer.rfind(punct)
+                    if pos > sentence_end:
+                        sentence_end = pos
+                
+                if sentence_end >= 0:
+                    sentence = text_buffer[:sentence_end + 1]
+                    text_buffer = text_buffer[sentence_end + 1:]
+                else:
+                    # Если не нашли предложение, ищем последний пробел перед 200 символами
+                    # чтобы не разрывать слова
+                    cutoff = 200
+                    if len(text_buffer) > cutoff:
+                        # Ищем последний пробел
+                        last_space = text_buffer.rfind(' ', 0, cutoff + 1)
+                        if last_space > cutoff // 2:  # Найден пробел во второй половине
+                            cutoff = last_space + 1
+                    
+                    sentence = text_buffer[:cutoff]
+                    text_buffer = text_buffer[cutoff:]
+                
+                # Синтезируем предложение в аудио
+                if sentence.strip():
+                    # Очищаем текст от markdown и спецсимволов перед синтезом
+                    cleaned_sentence = clean_text_from_markdown(sentence)
+                    print(f"🔊 Синтез: '{cleaned_sentence[:30]}...' (было: '{sentence[:30]}...')")
+                    try:
+                        chunk_count = 0
+                        async for audio_chunk in tts_module.synthesize_stream(cleaned_sentence, language="ru"):
+                            # Проверяем прерывание перед отправкой каждого аудио чанка
+                            if generation_interrupted.is_set():
+                                print("⚠️ TTS прерван!")
+                                return
+                            
+                            chunk_count += 1
+                            # Отправляем аудио чанк клиенту (base64)
+                            audio_base64 = base64.b64encode(audio_chunk).decode('utf-8')
+                            print(f"📦 Отправка аудио чанка #{chunk_count}, размер: {len(audio_base64)} символов (байт данных: {len(audio_chunk)})")
+                            await websocket.send_json({
+                                "type": "audio_chunk",
+                                "data": audio_base64
+                            })
+                        print(f"✅ Синтез завершен, отправлено {chunk_count} чанков")
+                    except Exception as tts_error:
+                        print(f"⚠️ Ошибка TTS: {tts_error}")
+                        import traceback
+                        traceback.print_exc()
+        
+        # Обрабатываем остаток буфера (только если не было прерывания)
+        if not generation_interrupted.is_set() and text_buffer.strip():
+            # Очищаем текст от markdown и спецсимволов перед синтезом
+            cleaned_buffer = clean_text_from_markdown(text_buffer)
+            print(f"🔊 Финальный синтез: '{cleaned_buffer[:30]}...' (было: '{text_buffer[:30]}...')")
+            try:
+                chunk_count = 0
+                async for audio_chunk in tts_module.synthesize_stream(cleaned_buffer, language="ru"):
+                    # Проверяем прерывание
+                    if generation_interrupted.is_set():
+                        print("⚠️ Финальный TTS прерван!")
+                        return
+                    
+                    chunk_count += 1
+                    audio_base64 = base64.b64encode(audio_chunk).decode('utf-8')
+                    print(f"📦 Отправка финального аудио чанка #{chunk_count}, размер: {len(audio_base64)} символов")
+                    await websocket.send_json({
+                        "type": "audio_chunk",
+                        "data": audio_base64
+                    })
+                print(f"✅ Финальный синтез завершен, отправлено {chunk_count} чанков")
+            except Exception as tts_error:
+                print(f"⚠️ Ошибка финального TTS: {tts_error}")
+                import traceback
+                traceback.print_exc()
+        
+        # Сохраняем полный ответ как есть, без изменений (только если не было прерывания)
+        if not generation_interrupted.is_set() and full_response:
+            state.add_to_history("assistant", full_response)
+            print(f"💬 Полный ответ AI: {full_response}")
+        elif generation_interrupted.is_set():
+            print("⚠️ Генерация была прервана, ответ не сохранен в историю")
+        
+        # Отправляем конец потока
+        await websocket.send_json({
+            "type": "stream_end",
+            "text": full_response if not generation_interrupted.is_set() else ""
+        })
+    except asyncio.CancelledError:
+        print("⚠️ Генерация отменена")
+        raise
+    except Exception as e:
+        print(f"❌ Критическая ошибка при генерации ответа: {e}")
+        import traceback
+        traceback.print_exc()
+        
+        # Пытаемся уведомить клиента об ошибке
+        try:
+            await websocket.send_json({
+                "type": "error",
+                "message": f"Ошибка генерации ответа: {str(e)}"
+            })
+            # Возвращаемся в состояние listening
+            await websocket.send_json({
+                "type": "state",
+                "state": "listening"
+            })
+        except:
+            pass  # Если не удалось отправить, просто игнорируем
+
+
 @app.websocket("/ws/voice")
 async def websocket_voice_endpoint(websocket: WebSocket):
     """
@@ -356,6 +507,10 @@ async def websocket_voice_endpoint(websocket: WebSocket):
 
     # Константы для детекции завершенности
     SILENCE_THRESHOLD = 1.5  # секунды тишины после речи
+
+    # Флаг для прерывания генерации
+    generation_interrupted = asyncio.Event()
+    generation_task = None
 
     try:
         while True:
@@ -420,163 +575,145 @@ async def websocket_voice_endpoint(websocket: WebSocket):
             elif message_type == "speech_end":
                 # Клиент детектировал конец речи
                 print("🔇 Конец речи детектирован")
+                print(f"🔇 Текущее состояние: {state.current_state.value}")
+                print(f"🔇 Последний промежуточный транскрипт: '{last_transcript}'")
 
-                # Проверяем что мы в режиме listening
-                if state.current_state != DialogState.LISTENING:
-                    print(f"⚠️ Игнорируем speech_end - текущее состояние: {state.current_state.value}")
-                    continue
+                try:
+                    # Проверяем что мы в режиме listening
+                    if state.current_state != DialogState.LISTENING:
+                        print(f"⚠️ Игнорируем speech_end - текущее состояние: {state.current_state.value}")
+                        continue
 
-                state.mark_silence_start()
+                    state.mark_silence_start()
 
-                # Ждем SILENCE_THRESHOLD секунд
-                await asyncio.sleep(SILENCE_THRESHOLD)
+                    # Ждем SILENCE_THRESHOLD секунд для финализации распознавания
+                    print(f"⏳ Ожидание {SILENCE_THRESHOLD} сек для финализации распознавания...")
+                    await asyncio.sleep(SILENCE_THRESHOLD)
 
-                # Проверяем что тишина все еще продолжается
-                if state.get_silence_duration() and state.get_silence_duration() >= SILENCE_THRESHOLD:
-                    # Получаем финальный текст
-                    final_text = streaming_stt_module.finalize(recognizer)
-                    if not final_text:
-                        final_text = last_transcript
+                    # Проверяем что тишина все еще продолжается
+                    silence_duration = state.get_silence_duration()
+                    print(f"⏳ Длительность тишины: {silence_duration} сек")
+                    
+                    if silence_duration and silence_duration >= SILENCE_THRESHOLD:
+                        # Получаем финальный текст
+                        print("📝 Финализация распознавания...")
+                        try:
+                            final_text = streaming_stt_module.finalize(recognizer)
+                            print(f"📝 Текст после finalize: '{final_text}'")
+                            if not final_text or not final_text.strip():
+                                print(f"⚠️ finalize вернул пустой текст, используем last_transcript: '{last_transcript}'")
+                                final_text = last_transcript
+                        except Exception as finalize_error:
+                            print(f"⚠️ Ошибка при finalize: {finalize_error}")
+                            import traceback
+                            traceback.print_exc()
+                            final_text = last_transcript
 
-                    print(f"📝 Финальный текст: '{final_text}'")
+                        print(f"📝 Финальный текст для обработки: '{final_text}'")
+                        print(f"📝 Длина финального текста: {len(final_text) if final_text else 0} символов")
 
-                    if final_text and final_text.strip():
-                        # Отправляем финальный текст клиенту
-                        await websocket.send_json({
-                            "type": "final_transcript",
-                            "text": final_text
-                        })
-
-                        # Добавляем в историю
-                        state.add_to_history("user", final_text)
-
-                        # Переходим к обработке
-                        state.start_processing()
-                        await websocket.send_json({
-                            "type": "state",
-                            "state": "processing"
-                        })
-
-                        # Переходим в состояние говорения для потоковой передачи
-                        state.start_speaking()
-                        await websocket.send_json({
-                            "type": "state",
-                            "state": "speaking"
-                        })
-
-                        # Начинаем потоковую генерацию ответа
-                        print("🤖 Начало потоковой генерации ответа...")
-                        
-                        full_response = ""
-                        text_buffer = ""
-                        
-                        # Отправляем начало потока
-                        await websocket.send_json({
-                            "type": "stream_start"
-                        })
-                        
-                        # Потоковая генерация от LLM и TTS
-                        async for text_chunk in llm_module.generate_response_stream(final_text, system_prompt=None):
-                            # Логируем оригинальный чанк для отладки
-                            print(f"📝 Оригинальный чанк от LLM: '{text_chunk}' (длина: {len(text_chunk)})")
-                            
-                            # Передаем текст как есть, без изменений
-                            full_response += text_chunk
-                            text_buffer += text_chunk
-                            
-                            # Отправляем текстовый чанк для отображения
-                            if text_chunk:  # Отправляем только если есть текст
+                        if final_text and final_text.strip():
+                            # Фильтруем слишком короткие или неразборчивые тексты
+                            cleaned_text = final_text.strip()
+                            # Проверяем на слишком короткие тексты (менее 2 символов) или только спецсимволов
+                            if len(cleaned_text) < 2 or cleaned_text.lower() in ['непонятно', 'непонятно почему', 'непонятно oy']:
+                                print(f"⚠️ Текст слишком короткий или неразборчивый: '{cleaned_text}', возвращаемся к прослушиванию")
+                                # Создаем новый recognizer для следующей фразы
+                                recognizer = streaming_stt_module.create_recognizer()
+                                last_transcript = ""
+                                
+                                # ВАЖНО: Возвращаемся в состояние listening
+                                state.start_listening()
                                 await websocket.send_json({
-                                    "type": "text_chunk",
-                                    "text": text_chunk
+                                    "type": "state",
+                                    "state": "listening"
                                 })
-                            
-                            # Накопляем текст до предложения (до точки, восклицательного или вопросительного знака)
-                            # или до определенного размера (200 символов для лучшего качества TTS)
-                            if len(text_buffer) >= 200 or any(punct in text_buffer for punct in ['.', '!', '?', '。']):
-                                # Находим границу предложения
-                                sentence_end = -1
-                                for punct in ['.', '!', '?', '。']:
-                                    pos = text_buffer.rfind(punct)
-                                    if pos > sentence_end:
-                                        sentence_end = pos
+                                print("✅ Возвращено состояние 'listening' после пустого/неразборчивого текста")
+                            else:
+                                # Отправляем финальный текст клиенту
+                                await websocket.send_json({
+                                    "type": "final_transcript",
+                                    "text": cleaned_text
+                                })
+
+                                # Добавляем в историю
+                                state.add_to_history("user", cleaned_text)
+
+                                # Переходим к обработке
+                                print("🔄 Переход к обработке запроса...")
+                                state.start_processing()
+                                await websocket.send_json({
+                                    "type": "state",
+                                    "state": "processing"
+                                })
+
+                                # Переходим в состояние говорения для потоковой передачи
+                                state.start_speaking()
+                                await websocket.send_json({
+                                    "type": "state",
+                                    "state": "speaking"
+                                })
+
+                                # Сбрасываем флаг прерывания для новой генерации
+                                generation_interrupted.clear()
                                 
-                                if sentence_end >= 0:
-                                    sentence = text_buffer[:sentence_end + 1]
-                                    text_buffer = text_buffer[sentence_end + 1:]
-                                else:
-                                    # Если не нашли предложение, ищем последний пробел перед 200 символами
-                                    # чтобы не разрывать слова
-                                    cutoff = 200
-                                    if len(text_buffer) > cutoff:
-                                        # Ищем последний пробел
-                                        last_space = text_buffer.rfind(' ', 0, cutoff + 1)
-                                        if last_space > cutoff // 2:  # Найден пробел во второй половине
-                                            cutoff = last_space + 1
-                                    
-                                    sentence = text_buffer[:cutoff]
-                                    text_buffer = text_buffer[cutoff:]
-                                
-                                # Синтезируем предложение в аудио
-                                if sentence.strip():
-                                    # Очищаем текст от markdown и спецсимволов перед синтезом
-                                    cleaned_sentence = clean_text_from_markdown(sentence)
-                                    print(f"🔊 Синтез: '{cleaned_sentence[:30]}...' (было: '{sentence[:30]}...')")
-                                    try:
-                                        chunk_count = 0
-                                        async for audio_chunk in tts_module.synthesize_stream(cleaned_sentence, language="ru"):
-                                            chunk_count += 1
-                                            # Отправляем аудио чанк клиенту (base64)
-                                            audio_base64 = base64.b64encode(audio_chunk).decode('utf-8')
-                                            print(f"📦 Отправка аудио чанка #{chunk_count}, размер: {len(audio_base64)} символов (байт данных: {len(audio_chunk)})")
-                                            await websocket.send_json({
-                                                "type": "audio_chunk",
-                                                "data": audio_base64
-                                            })
-                                        print(f"✅ Синтез завершен, отправлено {chunk_count} чанков")
-                                    except Exception as tts_error:
-                                        print(f"⚠️ Ошибка TTS: {tts_error}")
-                                        import traceback
-                                        traceback.print_exc()
-                        
-                        # Обрабатываем остаток буфера
-                        if text_buffer.strip():
-                            # Очищаем текст от markdown и спецсимволов перед синтезом
-                            cleaned_buffer = clean_text_from_markdown(text_buffer)
-                            print(f"🔊 Финальный синтез: '{cleaned_buffer[:30]}...' (было: '{text_buffer[:30]}...')")
-                            try:
-                                chunk_count = 0
-                                async for audio_chunk in tts_module.synthesize_stream(cleaned_buffer, language="ru"):
-                                    chunk_count += 1
-                                    audio_base64 = base64.b64encode(audio_chunk).decode('utf-8')
-                                    print(f"📦 Отправка финального аудио чанка #{chunk_count}, размер: {len(audio_base64)} символов")
+                                # Запускаем генерацию в отдельной задаче, чтобы не блокировать получение interrupt
+                                print("🚀 Запуск генерации ответа...")
+                                try:
+                                    generation_task = asyncio.create_task(
+                                        generate_and_send_response(websocket, cleaned_text, state, generation_interrupted)
+                                    )
+                                    print("✅ Задача генерации создана успешно")
+                                except Exception as task_error:
+                                    print(f"❌ Ошибка создания задачи генерации: {task_error}")
+                                    import traceback
+                                    traceback.print_exc()
+                                    # Возвращаемся в listening при ошибке создания задачи
+                                    state.start_listening()
                                     await websocket.send_json({
-                                        "type": "audio_chunk",
-                                        "data": audio_base64
+                                        "type": "state",
+                                        "state": "listening"
                                     })
-                                print(f"✅ Финальный синтез завершен, отправлено {chunk_count} чанков")
-                            except Exception as tts_error:
-                                print(f"⚠️ Ошибка финального TTS: {tts_error}")
-                                import traceback
-                                traceback.print_exc()
-                        
-                        # Сохраняем полный ответ как есть, без изменений
-                        if full_response:
-                            state.add_to_history("assistant", full_response)
-                            print(f"💬 Полный ответ AI: {full_response}")
+                                    await websocket.send_json({
+                                        "type": "error",
+                                        "message": f"Ошибка запуска генерации: {str(task_error)}"
+                                    })
                         else:
-                            full_response = ""
-                        
-                        # Отправляем конец потока
-                        await websocket.send_json({
-                            "type": "stream_end",
-                            "text": full_response
-                        })
+                            print("⚠️ Пустой финальный текст, возвращаемся к прослушиванию")
+                            # Создаем новый recognizer для следующей фразы
+                            recognizer = streaming_stt_module.create_recognizer()
+                            last_transcript = ""
+                            
+                            # ВАЖНО: Возвращаемся в состояние listening
+                            state.start_listening()
+                            await websocket.send_json({
+                                "type": "state",
+                                "state": "listening"
+                            })
+                            print("✅ Возвращено состояние 'listening' после пустого текста")
                     else:
-                        print("⚠️ Пустой финальный текст, игнорируем")
-                        # Создаем новый recognizer для следующей фразы
+                        print(f"⚠️ Тишина прервана (длительность: {silence_duration} сек), игнорируем speech_end")
+                except Exception as speech_end_error:
+                    print(f"❌ Критическая ошибка при обработке speech_end: {speech_end_error}")
+                    import traceback
+                    traceback.print_exc()
+                    # Пытаемся вернуться в listening и уведомить клиента
+                    try:
+                        state.start_listening()
+                        await websocket.send_json({
+                            "type": "state",
+                            "state": "listening"
+                        })
+                        await websocket.send_json({
+                            "type": "error",
+                            "message": f"Ошибка обработки речи: {str(speech_end_error)}"
+                        })
                         recognizer = streaming_stt_module.create_recognizer()
                         last_transcript = ""
+                        print("✅ Восстановлено состояние после ошибки")
+                    except Exception as recovery_error:
+                        print(f"❌ Ошибка восстановления после speech_end: {recovery_error}")
+                        raise  # Поднимаем исключение, что приведет к закрытию WebSocket
 
             elif message_type == "speaking_finished":
                 # Воспроизведение ответа завершено, возвращаемся к прослушиванию
@@ -606,6 +743,25 @@ async def websocket_voice_endpoint(websocket: WebSocket):
                 print(f"⚠️ Получен interrupt, текущее состояние: {state.current_state.value}")
                 if state.can_interrupt():
                     print("⚠️ Прерывание воспроизведения разрешено, возврат к прослушиванию...")
+                    
+                    # Устанавливаем флаг прерывания
+                    generation_interrupted.set()
+                    print("🚩 Флаг прерывания установлен")
+                    
+                    # Отменяем задачу генерации если она выполняется
+                    if generation_task and not generation_task.done():
+                        print("⏹️ Отмена задачи генерации...")
+                        generation_task.cancel()
+                        try:
+                            await generation_task
+                        except asyncio.CancelledError:
+                            print("✅ Задача генерации отменена")
+                        except Exception as e:
+                            print(f"⚠️ Ошибка при отмене задачи генерации: {e}")
+                    
+                    # Очищаем задачу
+                    generation_task = None
+                    
                     state.start_listening()
 
                     # Создаем новый recognizer
@@ -617,6 +773,7 @@ async def websocket_voice_endpoint(websocket: WebSocket):
                         "type": "state",
                         "state": "listening"
                     })
+                    print("✅ Отправлено состояние 'listening' после прерывания")
                 else:
                     print(f"❌ Прерывание НЕ разрешено в состоянии {state.current_state.value}")
 

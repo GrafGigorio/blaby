@@ -434,11 +434,13 @@
         let speechStart = null;
         let vadCheckInterval = null;
         const SPEECH_THRESHOLD = 15; // Порог громкости для детекции речи (%)
-        const INTERRUPT_THRESHOLD = 18; // Порог для прерывания (немного выше обычного)
-        const INTERRUPT_MIN_DURATION = 300; // Минимальная длительность громкого звука для прерывания (0.3 сек)
+        const INTERRUPT_THRESHOLD = 16; // Порог для прерывания (немного выше обычного, снижен для более чувствительного прерывания)
+        const INTERRUPT_MIN_DURATION = 150; // Минимальная длительность громкого звука для прерывания (0.15 сек, снижено для более быстрого прерывания)
+        const INTERRUPT_GRACE_PERIOD = 200; // Задержка перед сбросом счетчика прерывания (0.2 сек) - позволяет небольшие паузы в речи
         const SILENCE_DURATION = 500; // Миллисекунды тишины для завершения фразы (0.5 сек)
         const MIN_SPEECH_DURATION = 300; // Минимальная длительность речи
         let interruptSpeechStart = null; // Время начала речи для прерывания
+        let interruptLastDetected = null; // Время последнего обнаружения звука выше порога
 
         const statusDiv = document.getElementById('status');
         const conversationDiv = document.getElementById('conversation');
@@ -660,8 +662,11 @@
                         handleStreamEnd(data.text);
                         break;
                     case 'error':
-                        console.error('❌ Ошибка:', data.message);
-                        updateStatus('❌ Ошибка: ' + data.message, 'idle');
+                        console.error('❌ Ошибка от сервера:', data.message);
+                        // Показываем ошибку, но не останавливаем диалог
+                        // Сервер сам вернет состояние 'listening' если нужно
+                        updateStatus('⚠️ Ошибка: ' + data.message, 'idle');
+                        // Ждем следующего сообщения о состоянии от сервера
                         break;
                 }
             };
@@ -684,8 +689,12 @@
         async function handleStateChange(state) {
             switch (state) {
                 case 'listening':
-                    console.log('📡 Состояние: LISTENING');
                     updateStatus('🎧 Слушаю... Говорите!', 'listening');
+                    console.log('📡 Состояние: LISTENING');
+
+                    // Сбрасываем счетчики прерывания при переходе в listening
+                    interruptSpeechStart = null;
+                    interruptLastDetected = null;
 
                     // Останавливаем все активные воспроизведения (для случая прерывания)
                     if (currentAudioElements.length > 0 || isPlayingAudio) {
@@ -741,8 +750,8 @@
                     }
                     break;
                 case 'processing':
-                    console.log('📡 Состояние: PROCESSING');
                     updateStatus('⏳ Обрабатываю запрос...', 'processing');
+                    console.log('📡 Состояние: PROCESSING');
                     // Останавливаем VAD и запись на время обработки
                     if (vadCheckInterval) {
                         clearInterval(vadCheckInterval);
@@ -752,8 +761,8 @@
                     stopAudioRecording();
                     break;
                 case 'speaking':
-                    console.log('📡 Состояние: SPEAKING - currentState установлен в:', currentState);
                     updateStatus('🔊 Отвечаю...', 'speaking');
+                    console.log('📡 Состояние: SPEAKING - currentState установлен в:', currentState);
 
                     // ОСТАВЛЯЕМ VAD и запись активными для детекции прерывания
                     // VAD продолжает работать чтобы детектировать речь пользователя
@@ -763,7 +772,13 @@
                     } else {
                         console.log('ℹ️ VAD уже активен, интервал ID:', vadCheckInterval);
                     }
-                    // НЕ останавливаем запись аудио чтобы детектировать прерывание
+
+                    // ВАЖНО: Запускаем запись аудио для захвата прерывания
+                    // (если её еще нет, она была остановлена при переходе в processing)
+                    if (!audioProcessor) {
+                        console.log('🎙️ Запуск записи для детекции прерывания...');
+                        await startAudioRecording();
+                    }
                     break;
             }
         }
@@ -885,6 +900,13 @@
 
             // Воспроизводим чанки из очереди СТРОГО ПОСЛЕДОВАТЕЛЬНО
             while ((playbackQueue.length > 0 || currentAudioChunks.length > 0) && isDialogActive) {
+                // ПРОВЕРКА: Если воспроизведение остановлено (isPlayingAudio сброшен), выходим
+                if (!isPlayingAudio) {
+                    console.log('⏹️ Воспроизведение остановлено извне, прекращаем цикл');
+                    clearInterval(checkInterval);
+                    return;
+                }
+
                 // Проверяем что диалог еще активен
                 if (!isDialogActive) {
                     console.log('⏹️ Диалог остановлен, прекращаем воспроизведение');
@@ -914,15 +936,42 @@
 
                     if (chunksToPlay.length === 0) continue;
 
-                    console.log('▶️ Воспроизведение', chunksToPlay.length, 'чанков, размер:', chunksToPlay.reduce((sum, chunk) => sum + chunk.length, 0), 'байт');
+                    // Проверяем что есть данные для воспроизведения
+                    const totalSize = chunksToPlay.reduce((sum, chunk) => sum + (chunk ? chunk.length : 0), 0);
+                    if (totalSize === 0) {
+                        console.warn('⚠️ Пропуск пустых чанков');
+                        continue;
+                    }
+
+                    console.log('▶️ Воспроизведение', chunksToPlay.length, 'чанков, размер:', totalSize, 'байт');
 
                     // Объединяем чанки в один Blob
                     // Edge TTS возвращает MP3 (audio/mpeg) для совместимости с Safari
                     const audioBlob = new Blob(chunksToPlay, { type: 'audio/mpeg' });
+
+                    // Проверяем что Blob валидный и не пустой
+                    if (audioBlob.size === 0) {
+                        console.warn('⚠️ Blob пустой, пропускаем');
+                        continue;
+                    }
+
                     const audioUrl = URL.createObjectURL(audioBlob);
+
+                    // Проверяем что URL создан корректно
+                    if (!audioUrl || audioUrl === '') {
+                        console.error('❌ Не удалось создать URL для аудио');
+                        continue;
+                    }
 
                     // Создаем audio элемент для воспроизведения
                     const audioElement = new Audio(audioUrl);
+
+                    // Проверяем что элемент создан корректно
+                    if (!audioElement || !audioElement.src) {
+                        console.error('❌ Не удалось создать audio элемент');
+                        URL.revokeObjectURL(audioUrl);
+                        continue;
+                    }
 
                     // Добавляем более детальное логирование ошибок
                     audioElement.addEventListener('loadstart', () => console.log('🔄 Аудио: loadstart'));
@@ -1054,28 +1103,69 @@
                         // Проверяем готовность к воспроизведению (только если src не пустой)
                         if (!isSrcEmpty(audioElement) && audioElement.readyState < 2) {
                             console.log('⏳ Ожидание загрузки аудио... (readyState:', audioElement.readyState, ')');
-                            await new Promise((resolve, reject) => {
-                                const timeout = setTimeout(() => {
-                                    console.warn('⏰ Таймаут загрузки аудио');
-                                    reject(new Error('Таймаут загрузки аудио'));
-                                }, 5000);
-                                audioElement.addEventListener('canplay', () => {
-                                    clearTimeout(timeout);
-                                    console.log('✅ Аудио готово к воспроизведению');
-                                    resolve();
-                                }, { once: true });
-                                audioElement.addEventListener('error', () => {
-                                    clearTimeout(timeout);
-                                    // Игнорируем ошибки с пустым src (это нормально при остановке)
-                                    if (isSrcEmpty(audioElement) || audioElement.error?.code === 4) {
-                                        console.log('ℹ️ Ошибка загрузки с пустым src (игнорируем)');
-                                        resolve(); // Разрешаем вместо reject чтобы не прерывать цикл
-                                        return;
-                                    }
-                                    console.error('❌ Ошибка при загрузке аудио:', audioElement.error);
-                                    resolve(); // Разрешаем чтобы не прерывать цикл, просто пропустим этот элемент
-                                }, { once: true });
-                            });
+                            try {
+                                await new Promise((resolve, reject) => {
+                                    const timeout = setTimeout(() => {
+                                        console.warn('⏰ Таймаут загрузки аудио');
+                                        reject(new Error('Таймаут загрузки аудио'));
+                                    }, 5000);
+
+                                    // Проверяем готовность через несколько событий
+                                    const checkReady = () => {
+                                        if (audioElement.readyState >= 2) {
+                                            clearTimeout(timeout);
+                                            console.log('✅ Аудио готово к воспроизведению (readyState:', audioElement.readyState, ')');
+                                            resolve();
+                                            return true;
+                                        }
+                                        return false;
+                                    };
+
+                                    // Проверяем сразу на случай если уже загружено
+                                    if (checkReady()) return;
+
+                                    audioElement.addEventListener('canplay', () => {
+                                        if (checkReady()) return;
+                                        clearTimeout(timeout);
+                                        console.log('✅ Аудио готово к воспроизведению (canplay)');
+                                        resolve();
+                                    }, { once: true });
+
+                                    audioElement.addEventListener('canplaythrough', () => {
+                                        if (checkReady()) return;
+                                        clearTimeout(timeout);
+                                        console.log('✅ Аудио готово к воспроизведению (canplaythrough)');
+                                        resolve();
+                                    }, { once: true });
+
+                                    audioElement.addEventListener('loadeddata', () => {
+                                        if (checkReady()) return;
+                                    }, { once: true });
+
+                                    audioElement.addEventListener('error', () => {
+                                        clearTimeout(timeout);
+                                        // Игнорируем ошибки с пустым src (это нормально при остановке)
+                                        if (isSrcEmpty(audioElement) || audioElement.error?.code === 4) {
+                                            console.log('ℹ️ Ошибка загрузки с пустым src (игнорируем)');
+                                            resolve(); // Разрешаем вместо reject чтобы не прерывать цикл
+                                            return;
+                                        }
+                                        console.error('❌ Ошибка при загрузке аудио:', audioElement.error);
+                                        reject(new Error(`Ошибка загрузки аудио: ${audioElement.error?.message || 'Unknown error'}`));
+                                    }, { once: true });
+                                });
+                            } catch (loadError) {
+                                console.error('❌ Ошибка при ожидании загрузки аудио:', loadError);
+                                URL.revokeObjectURL(audioUrl);
+                                if (currentPlayingElement === audioElement) {
+                                    currentPlayingElement = null;
+                                }
+                                const index = currentAudioElements.indexOf(audioElement);
+                                if (index > -1) {
+                                    currentAudioElements.splice(index, 1);
+                                }
+                                continue; // Пропускаем этот элемент
+                            }
                         }
 
                         // Еще раз проверяем после await
@@ -1091,13 +1181,49 @@
                         }
 
                         // Попытка воспроизведения
-                        console.log('🎬 Попытка запуска воспроизведения (readyState:', audioElement.readyState, ')');
-                        const playPromise = audioElement.play();
+                        console.log('🎬 Попытка запуска воспроизведения (readyState:', audioElement.readyState, ', src:', audioElement.src ? 'установлен' : 'отсутствует', ')');
 
-                        if (playPromise !== undefined) {
-                            await playPromise;
+                        // Проверяем что src валиден перед воспроизведением
+                        if (isSrcEmpty(audioElement)) {
+                            console.warn('⚠️ Audio элемент имеет пустой src, пропускаем воспроизведение');
+                            URL.revokeObjectURL(audioUrl);
+                            continue;
                         }
-                        console.log('▶️ Воспроизведение запущено успешно');
+
+                        // Проверяем что элемент готов к воспроизведению
+                        if (audioElement.readyState === 0 && audioElement.error) {
+                            console.error('❌ Audio элемент имеет ошибку перед воспроизведением:', audioElement.error);
+                            URL.revokeObjectURL(audioUrl);
+                            continue;
+                        }
+
+                        try {
+                            const playPromise = audioElement.play();
+
+                            if (playPromise !== undefined) {
+                                await playPromise;
+                                console.log('▶️ Воспроизведение запущено успешно');
+                            } else {
+                                console.log('▶️ Воспроизведение запущено (без promise)');
+                            }
+                        } catch (playError) {
+                            // Обрабатываем ошибку воспроизведения отдельно
+                            console.error('❌ Ошибка при вызове play():', playError);
+                            if (playError.name === 'NotSupportedError') {
+                                console.error('❌ Аудио формат не поддерживается или элемент не имеет валидного источника');
+                                console.error('❌ Детали: src =', audioElement.src, ', readyState =', audioElement.readyState, ', error =', audioElement.error);
+                            }
+                            URL.revokeObjectURL(audioUrl);
+                            // Продолжаем с следующим элементом
+                            if (currentPlayingElement === audioElement) {
+                                currentPlayingElement = null;
+                            }
+                            const index = currentAudioElements.indexOf(audioElement);
+                            if (index > -1) {
+                                currentAudioElements.splice(index, 1);
+                            }
+                            continue; // Пропускаем этот элемент и переходим к следующему
+                        }
 
                         // Ждем окончания воспроизведения
                         await new Promise((resolve) => {
@@ -1428,14 +1554,20 @@
 
                 if (volumePercent > INTERRUPT_THRESHOLD) {
                     // Громкий звук обнаружен
+                    interruptLastDetected = now; // Обновляем время последнего обнаружения
+
                     if (!interruptSpeechStart) {
                         interruptSpeechStart = now;
                         console.log('🎤 Возможное прерывание (громкость:', volumePercent, '%), ожидаем подтверждения...');
                     } else {
-                        // Проверяем длительность
+                        // Проверяем длительность (от начала до последнего обнаружения)
                         const interruptDuration = now - interruptSpeechStart;
                         if (interruptDuration >= INTERRUPT_MIN_DURATION) {
-                            console.log('⚠️ Подтверждено прерывание! (длительность:', interruptDuration, 'мс)');
+                            console.log('⚠️ Подтверждено прерывание! (длительность:', interruptDuration, 'мс, громкость:', volumePercent, '%)');
+
+                            // Сбрасываем счетчики прерывания
+                            interruptSpeechStart = null;
+                            interruptLastDetected = null;
 
                             // Останавливаем ВСЕ активные аудио элементы
                             console.log('⏹️ Остановка всех воспроизведений при прерывании...');
@@ -1489,6 +1621,9 @@
                             // Отправляем interrupt на сервер
                             if (ws && ws.readyState === WebSocket.OPEN) {
                                 ws.send(JSON.stringify({ type: 'interrupt' }));
+                                console.log('📤 Отправлен interrupt на сервер');
+                            } else {
+                                console.error('❌ WebSocket не готов для отправки interrupt, состояние:', ws ? ws.readyState : 'null');
                             }
 
                             // СРАЗУ начинаем записывать новую речь пользователя (не ждем ответа от сервера)
@@ -1501,15 +1636,22 @@
                             await startAudioRecording();
                             console.log('✅ Запись активирована для захвата речи при прерывании');
 
-                            // interruptSpeechStart НЕ сбрасываем - он будет сброшен при переходе в listening
                             return;
                         }
                     }
                 } else {
-                    // Звук стал тише порога прерывания - сбрасываем счетчик
+                    // Звук стал тише порога прерывания
                     if (interruptSpeechStart) {
-                        console.log('🔇 Звук стих, сбрасываем счетчик прерывания');
-                        interruptSpeechStart = null;
+                        // Проверяем grace period - если прошло достаточно времени с последнего обнаружения звука
+                        if (interruptLastDetected && (now - interruptLastDetected) > INTERRUPT_GRACE_PERIOD) {
+                            console.log('🔇 Звук стих более', INTERRUPT_GRACE_PERIOD, 'мс, сбрасываем счетчик прерывания');
+                            interruptSpeechStart = null;
+                            interruptLastDetected = null;
+                        } else if (!interruptLastDetected) {
+                            // Если interruptLastDetected не был установлен, сбрасываем сразу
+                            interruptSpeechStart = null;
+                        }
+                        // Иначе продолжаем считать - возможно это просто пауза в речи
                     }
                 }
                 return; // В состоянии speaking не обрабатываем обычную речь
@@ -1550,6 +1692,9 @@
                             stopAudioRecording();
                             if (ws && ws.readyState === WebSocket.OPEN) {
                                 ws.send(JSON.stringify({ type: 'speech_end' }));
+                                console.log('📤 Отправлен speech_end на сервер');
+                            } else {
+                                console.error('❌ WebSocket не готов для отправки speech_end, состояние:', ws ? ws.readyState : 'null');
                             }
                         }
                     }
