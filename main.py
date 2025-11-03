@@ -20,6 +20,7 @@ from llm_module import LLMModule
 from tts_module import TTSModule
 from stt_streaming_module import StreamingSTTModule
 from state_manager import StateManager, DialogState
+from action_manager import ActionManager
 import re
 
 # Директории для файлов
@@ -334,7 +335,20 @@ async def set_model(model_data: dict):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-async def generate_and_send_response(websocket, final_text, state, generation_interrupted):
+def get_system_prompt_for_action(action_manager: ActionManager) -> str:
+    """
+    Получить системный промпт для работы с действиями
+    
+    Args:
+        action_manager: экземпляр ActionManager
+        
+    Returns:
+        Системный промпт
+    """
+    return action_manager.get_system_prompt()
+
+
+async def generate_and_send_response(websocket, final_text, state, generation_interrupted, action_manager: ActionManager = None, system_prompt_override: str = None):
     """Генерирует ответ AI и отправляет клиенту с проверкой прерывания"""
     try:
         # Начинаем потоковую генерацию ответа
@@ -343,6 +357,11 @@ async def generate_and_send_response(websocket, final_text, state, generation_in
         full_response = ""
         text_buffer = ""
         
+        # Получаем системный промпт если есть action_manager или override
+        system_prompt = system_prompt_override
+        if system_prompt is None and action_manager:
+            system_prompt = get_system_prompt_for_action(action_manager)
+        
         # Отправляем начало потока
         await websocket.send_json({
             "type": "stream_start"
@@ -350,7 +369,7 @@ async def generate_and_send_response(websocket, final_text, state, generation_in
         
         # Потоковая генерация от LLM и TTS с проверкой прерывания
         chunk_num = 0
-        async for text_chunk in llm_module.generate_response_stream(final_text, system_prompt=None):
+        async for text_chunk in llm_module.generate_response_stream(final_text, system_prompt=system_prompt):
             # Проверяем флаг прерывания
             if generation_interrupted.is_set():
                 print("⚠️ Генерация прервана!")
@@ -399,8 +418,15 @@ async def generate_and_send_response(websocket, final_text, state, generation_in
                 
                 # Синтезируем предложение в аудио
                 if sentence.strip():
+                    # Предварительно пытаемся удалить JSON если есть action_manager
+                    sentence_for_tts = sentence
+                    if action_manager:
+                        # Пытаемся найти и удалить JSON из предложения
+                        _, cleaned = action_manager.parse_llm_response(sentence)
+                        if cleaned != sentence:
+                            sentence_for_tts = cleaned
                     # Очищаем текст от markdown и спецсимволов перед синтезом
-                    cleaned_sentence = clean_text_from_markdown(sentence)
+                    cleaned_sentence = clean_text_from_markdown(sentence_for_tts)
                     print(f"🔊 Синтез: '{cleaned_sentence[:30]}...' (было: '{sentence[:30]}...')")
                     try:
                         chunk_count = 0
@@ -426,8 +452,14 @@ async def generate_and_send_response(websocket, final_text, state, generation_in
         
         # Обрабатываем остаток буфера (только если не было прерывания)
         if not generation_interrupted.is_set() and text_buffer.strip():
+            # Предварительно пытаемся удалить JSON если есть action_manager
+            buffer_for_tts = text_buffer
+            if action_manager:
+                _, cleaned = action_manager.parse_llm_response(text_buffer)
+                if cleaned != text_buffer:
+                    buffer_for_tts = cleaned
             # Очищаем текст от markdown и спецсимволов перед синтезом
-            cleaned_buffer = clean_text_from_markdown(text_buffer)
+            cleaned_buffer = clean_text_from_markdown(buffer_for_tts)
             print(f"🔊 Финальный синтез: '{cleaned_buffer[:30]}...' (было: '{text_buffer[:30]}...')")
             try:
                 chunk_count = 0
@@ -450,17 +482,35 @@ async def generate_and_send_response(websocket, final_text, state, generation_in
                 import traceback
                 traceback.print_exc()
         
-        # Сохраняем полный ответ как есть, без изменений (только если не было прерывания)
-        if not generation_interrupted.is_set() and full_response:
-            state.add_to_history("assistant", full_response)
-            print(f"💬 Полный ответ AI: {full_response}")
+        # Парсим JSON из полного ответа если есть action_manager
+        cleaned_response_for_history = full_response
+        action_data = None
+        if action_manager and not generation_interrupted.is_set() and full_response:
+            parsed_data, cleaned_text = action_manager.parse_llm_response(full_response)
+            if parsed_data:
+                print(f"📊 Распарсенные данные действия: {parsed_data}")
+                # Обновляем состояние action_manager
+                action_data = action_manager.update_from_parsed_data(parsed_data)
+                # Используем очищенный текст для истории и TTS
+                cleaned_response_for_history = cleaned_text
+                # Отправляем action_data клиенту
+                await websocket.send_json({
+                    "type": "action_data",
+                    "data": action_data
+                })
+                print(f"📤 Отправлены данные действия клиенту: {action_data}")
+        
+        # Сохраняем очищенный ответ в историю (только если не было прерывания)
+        if not generation_interrupted.is_set() and cleaned_response_for_history:
+            state.add_to_history("assistant", cleaned_response_for_history)
+            print(f"💬 Полный ответ AI (очищенный): {cleaned_response_for_history}")
         elif generation_interrupted.is_set():
             print("⚠️ Генерация была прервана, ответ не сохранен в историю")
         
         # Отправляем конец потока
         await websocket.send_json({
             "type": "stream_end",
-            "text": full_response if not generation_interrupted.is_set() else ""
+            "text": cleaned_response_for_history if not generation_interrupted.is_set() else ""
         })
     except asyncio.CancelledError:
         print("⚠️ Генерация отменена")
@@ -508,6 +558,8 @@ async def websocket_voice_endpoint(websocket: WebSocket):
 
     # Создаем state manager для этой сессии
     state = StateManager()
+    # Создаем action manager для этой сессии
+    action_manager = ActionManager()
     recognizer = None
     silence_timer = None
     last_transcript = ""
@@ -518,6 +570,7 @@ async def websocket_voice_endpoint(websocket: WebSocket):
     # Флаг для прерывания генерации
     generation_interrupted = asyncio.Event()
     generation_task = None
+    greeting_sent = False  # Флаг для отслеживания отправленного приветствия
 
     try:
         while True:
@@ -530,6 +583,9 @@ async def websocket_voice_endpoint(websocket: WebSocket):
                 # Очищаем историю при начале нового диалога
                 print("🧹 Очистка истории LLM...")
                 llm_module.clear_history()
+                # Сбрасываем action_manager
+                action_manager.reset()
+                greeting_sent = False
 
                 # Начинаем слушать
                 print("🎧 Начало прослушивания...")
@@ -541,6 +597,55 @@ async def websocket_voice_endpoint(websocket: WebSocket):
                     "type": "state",
                     "state": "listening"
                 })
+                
+                # Автоматическое приветствие от Аси
+                if not greeting_sent:
+                    print("👋 Отправка приветствия от Аси...")
+                    greeting_sent = True
+                    # Генерируем приветствие без пользовательского ввода
+                    greeting_text = ""  # Пустой текст - это триггер для приветствия
+                    state.start_processing()
+                    await websocket.send_json({
+                        "type": "state",
+                        "state": "processing"
+                    })
+                    state.start_speaking()
+                    await websocket.send_json({
+                        "type": "state",
+                        "state": "speaking"
+                    })
+                    generation_interrupted.clear()
+                    # Используем специальный промпт для приветствия (без JSON)
+                    greeting_prompt = """Ты - Ася, голосовой ассистент телеком компании. Ты работаешь в компании, которая предоставляет услуги интернета.
+
+ВАЖНО: Это ПЕРВОЕ сообщение для нового клиента. Поприветствуй его как Ася. Скажи: "Здравствуйте! Меня зовут Ася, я работаю в телеком компании. Чем могу помочь?"
+
+НЕ возвращай JSON в этом сообщении, просто поприветствуй клиента обычным текстом. Будь дружелюбной и профессиональной."""
+                    # Генерируем приветствие
+                    try:
+                        greeting_task = asyncio.create_task(
+                            generate_and_send_response(
+                                websocket, 
+                                "Привет", 
+                                state, 
+                                generation_interrupted, 
+                                action_manager,
+                                system_prompt_override=greeting_prompt
+                            )
+                        )
+                        await greeting_task
+                    except Exception as greeting_error:
+                        print(f"❌ Ошибка приветствия: {greeting_error}")
+                        import traceback
+                        traceback.print_exc()
+                    # После приветствия возвращаемся в listening
+                    state.start_listening()
+                    await websocket.send_json({
+                        "type": "state",
+                        "state": "listening"
+                    })
+                    recognizer = streaming_stt_module.create_recognizer()
+                    last_transcript = ""
 
             elif message_type == "audio_chunk":
                 # Получен чанк аудио (не логируем каждый чанк)
@@ -668,7 +773,7 @@ async def websocket_voice_endpoint(websocket: WebSocket):
                                 print("🚀 Запуск генерации ответа...")
                                 try:
                                     generation_task = asyncio.create_task(
-                                        generate_and_send_response(websocket, cleaned_text, state, generation_interrupted)
+                                        generate_and_send_response(websocket, cleaned_text, state, generation_interrupted, action_manager)
                                     )
                                     print("✅ Задача генерации создана успешно")
                                 except Exception as task_error:

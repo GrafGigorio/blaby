@@ -18,8 +18,16 @@
             min-height: 100vh;
             display: flex;
             justify-content: center;
-            align-items: center;
+            align-items: flex-start;
             padding: 20px;
+        }
+
+        .main-wrapper {
+            display: flex;
+            gap: 20px;
+            max-width: 1200px;
+            width: 100%;
+            align-items: flex-start;
         }
 
         .container {
@@ -29,6 +37,101 @@
             padding: 40px;
             max-width: 700px;
             width: 100%;
+            flex: 1;
+        }
+
+        .application-panel {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            padding: 30px;
+            width: 350px;
+            max-height: calc(100vh - 40px);
+            overflow-y: auto;
+            position: sticky;
+            top: 20px;
+        }
+
+        .application-panel h2 {
+            color: #333;
+            margin-bottom: 20px;
+            font-size: 1.5em;
+            text-align: center;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
+        }
+
+        .application-content {
+            font-size: 14px;
+        }
+
+        .application-stage {
+            background: #f5f5f5;
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 15px;
+        }
+
+        .application-stage-label {
+            font-weight: 600;
+            color: #667eea;
+            margin-bottom: 10px;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .application-stage-value {
+            color: #333;
+            font-size: 16px;
+        }
+
+        .application-stage-value.empty {
+            color: #999;
+            font-style: italic;
+        }
+
+        .application-data-item {
+            margin-bottom: 12px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid #e0e0e0;
+        }
+
+        .application-data-item:last-child {
+            border-bottom: none;
+            margin-bottom: 0;
+            padding-bottom: 0;
+        }
+
+        .application-data-label {
+            font-weight: 600;
+            color: #666;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 5px;
+        }
+
+        .application-data-value {
+            color: #333;
+            font-size: 14px;
+            word-wrap: break-word;
+        }
+
+        .application-data-value.empty {
+            color: #999;
+            font-style: italic;
+        }
+
+        .application-complete {
+            background: #e8f5e9;
+            border: 2px solid #4caf50;
+            border-radius: 10px;
+            padding: 15px;
+            margin-top: 15px;
+            text-align: center;
+            color: #2e7d32;
+            font-weight: 600;
         }
 
         h1 {
@@ -349,58 +452,92 @@
 </head>
 
 <body>
-    <div class="container">
-        <h1>🎤 Голосовой Ассистент</h1>
-        <div class="subtitle">Потоковое распознавание • Непрерывный диалог</div>
-
-        <div class="model-selector-container">
-            <label class="model-selector-label">🤖 Модель:</label>
-            <select id="modelSelector" class="model-selector" onchange="changeModel()">
-                <option value="">Загрузка...</option>
-            </select>
-        </div>
-
-        <div id="status" class="status idle">
-            Готов к работе
-        </div>
-
-        <div class="controls">
-            <button id="startBtn" onclick="startDialog()" class="start-btn">
-                🎙️ Начать диалог
-            </button>
-            <button id="stopBtn" onclick="stopDialog()" class="stop-btn" style="display: none;">
-                ⏹️ Остановить
-            </button>
-        </div>
-
-        <!-- Промежуточный текст -->
-        <div id="partialContainer" class="partial-container">
-            <div class="partial-label">Распознаётся...</div>
-            <div id="partialText" class="partial-text"></div>
-        </div>
-
-        <!-- Контейнер для обоих эквалайзеров -->
-        <div class="visualizers-wrapper">
-            <!-- Эквалайзер записи (слева) -->
-            <div id="visualizerContainer" class="visualizer-container">
-                <canvas id="visualizer" width="300" height="80"></canvas>
-                <div class="volume-indicator">
-                    Уровень звука: <span id="volumeLevel">0</span>%
+    <div class="main-wrapper">
+        <!-- Блок Заявка -->
+        <div class="application-panel">
+            <h2>📋 Заявка</h2>
+            <div id="applicationContent" class="application-content">
+                <div class="application-stage">
+                    <div class="application-stage-label">Этап</div>
+                    <div id="applicationStage" class="application-stage-value empty">Ожидание</div>
                 </div>
-            </div>
-
-            <!-- Эквалайзер воспроизведения (справа) -->
-            <div id="playbackVisualizerContainer" class="playback-visualizer-container">
-                <canvas id="playback-visualizer" width="300" height="80"></canvas>
-                <div class="playback-label">
-                    🔊 Воспроизведение ответа
+                <div class="application-data-item">
+                    <div class="application-data-label">Город</div>
+                    <div id="applicationCity" class="application-data-value empty">Не выбран</div>
+                </div>
+                <div class="application-data-item">
+                    <div class="application-data-label">Тариф</div>
+                    <div id="applicationTariff" class="application-data-value empty">Не выбран</div>
+                </div>
+                <div class="application-data-item">
+                    <div class="application-data-label">Имя</div>
+                    <div id="applicationName" class="application-data-value empty">Не указано</div>
+                </div>
+                <div class="application-data-item">
+                    <div class="application-data-label">Телефон</div>
+                    <div id="applicationPhone" class="application-data-value empty">Не указан</div>
+                </div>
+                <div class="application-data-item">
+                    <div class="application-data-label">Адрес</div>
+                    <div id="applicationAddress" class="application-data-value empty">Не указан</div>
                 </div>
             </div>
         </div>
 
-        <div id="conversation" class="conversation">
-            <div class="empty-state">
-                Начните диалог, чтобы увидеть историю разговора...
+        <!-- Основной контейнер -->
+        <div class="container">
+            <h1>🎤 Голосовой Ассистент</h1>
+            <div class="subtitle">Потоковое распознавание • Непрерывный диалог</div>
+
+            <div class="model-selector-container">
+                <label class="model-selector-label">🤖 Модель:</label>
+                <select id="modelSelector" class="model-selector" onchange="changeModel()">
+                    <option value="">Загрузка...</option>
+                </select>
+            </div>
+
+            <div id="status" class="status idle">
+                Готов к работе
+            </div>
+
+            <div class="controls">
+                <button id="startBtn" onclick="startDialog()" class="start-btn">
+                    🎙️ Начать диалог
+                </button>
+                <button id="stopBtn" onclick="stopDialog()" class="stop-btn" style="display: none;">
+                    ⏹️ Остановить
+                </button>
+            </div>
+
+            <!-- Промежуточный текст -->
+            <div id="partialContainer" class="partial-container">
+                <div class="partial-label">Распознаётся...</div>
+                <div id="partialText" class="partial-text"></div>
+            </div>
+
+            <!-- Контейнер для обоих эквалайзеров -->
+            <div class="visualizers-wrapper">
+                <!-- Эквалайзер записи (слева) -->
+                <div id="visualizerContainer" class="visualizer-container">
+                    <canvas id="visualizer" width="300" height="80"></canvas>
+                    <div class="volume-indicator">
+                        Уровень звука: <span id="volumeLevel">0</span>%
+                    </div>
+                </div>
+
+                <!-- Эквалайзер воспроизведения (справа) -->
+                <div id="playbackVisualizerContainer" class="playback-visualizer-container">
+                    <canvas id="playback-visualizer" width="300" height="80"></canvas>
+                    <div class="playback-label">
+                        🔊 Воспроизведение ответа
+                    </div>
+                </div>
+            </div>
+
+            <div id="conversation" class="conversation">
+                <div class="empty-state">
+                    Начните диалог, чтобы увидеть историю разговора...
+                </div>
             </div>
         </div>
     </div>
@@ -417,6 +554,20 @@
         let audioSourceNode = null;
         let isDialogActive = false;
         let currentState = 'idle';
+
+        // Состояние действия (заявка)
+        let applicationState = {
+            action: null,
+            stage: null,
+            data: {
+                city: null,
+                tariff: null,
+                name: null,
+                phone: null,
+                address: null
+            },
+            is_complete: false
+        };
 
         // Переменные для потокового ответа
         let currentStreamingMessage = null;
@@ -660,6 +811,9 @@
                         break;
                     case 'stream_end':
                         handleStreamEnd(data.text);
+                        break;
+                    case 'action_data':
+                        handleActionData(data.data);
                         break;
                     case 'error':
                         console.error('❌ Ошибка от сервера:', data.message);
@@ -2179,9 +2333,159 @@
             }
         }
 
+        // Обработка данных действия
+        function handleActionData(data) {
+            console.log('📋 Получены данные действия:', data);
+
+            // Обновляем состояние
+            if (data.action) {
+                applicationState.action = data.action;
+            }
+            if (data.stage) {
+                applicationState.stage = data.stage;
+            }
+            if (data.data) {
+                Object.assign(applicationState.data, data.data);
+            }
+            if (data.hasOwnProperty('is_complete')) {
+                applicationState.is_complete = data.is_complete;
+            }
+
+            // Обновляем отображение
+            updateApplicationBlock();
+        }
+
+        // Обновление блока заявки
+        function updateApplicationBlock() {
+            const stageElement = document.getElementById('applicationStage');
+            const cityElement = document.getElementById('applicationCity');
+            const tariffElement = document.getElementById('applicationTariff');
+            const nameElement = document.getElementById('applicationName');
+            const phoneElement = document.getElementById('applicationPhone');
+            const addressElement = document.getElementById('applicationAddress');
+            const contentElement = document.getElementById('applicationContent');
+
+            // Обновляем этап
+            if (stageElement) {
+                let stageText = 'Ожидание';
+                if (applicationState.stage === 'city_selection') {
+                    stageText = 'Выбор города';
+                } else if (applicationState.stage === 'tariff_selection') {
+                    stageText = 'Выбор тарифа';
+                } else if (applicationState.stage === 'contact_info') {
+                    stageText = 'Контактные данные';
+                }
+                stageElement.textContent = stageText;
+                if (applicationState.stage) {
+                    stageElement.classList.remove('empty');
+                } else {
+                    stageElement.classList.add('empty');
+                }
+            }
+
+            // Обновляем город
+            if (cityElement) {
+                if (applicationState.data.city) {
+                    cityElement.textContent = applicationState.data.city;
+                    cityElement.classList.remove('empty');
+                } else {
+                    cityElement.textContent = 'Не выбран';
+                    cityElement.classList.add('empty');
+                }
+            }
+
+            // Обновляем тариф
+            if (tariffElement) {
+                if (applicationState.data.tariff) {
+                    const tariffInfo = getTariffInfo(applicationState.data.city, applicationState.data.tariff);
+                    if (tariffInfo) {
+                        tariffElement.textContent = `${applicationState.data.tariff} (${tariffInfo.speed}, ${tariffInfo.price} ₽/мес)`;
+                    } else {
+                        tariffElement.textContent = applicationState.data.tariff;
+                    }
+                    tariffElement.classList.remove('empty');
+                } else {
+                    tariffElement.textContent = 'Не выбран';
+                    tariffElement.classList.add('empty');
+                }
+            }
+
+            // Обновляем имя
+            if (nameElement) {
+                if (applicationState.data.name) {
+                    nameElement.textContent = applicationState.data.name;
+                    nameElement.classList.remove('empty');
+                } else {
+                    nameElement.textContent = 'Не указано';
+                    nameElement.classList.add('empty');
+                }
+            }
+
+            // Обновляем телефон
+            if (phoneElement) {
+                if (applicationState.data.phone) {
+                    phoneElement.textContent = applicationState.data.phone;
+                    phoneElement.classList.remove('empty');
+                } else {
+                    phoneElement.textContent = 'Не указан';
+                    phoneElement.classList.add('empty');
+                }
+            }
+
+            // Обновляем адрес
+            if (addressElement) {
+                if (applicationState.data.address) {
+                    addressElement.textContent = applicationState.data.address;
+                    addressElement.classList.remove('empty');
+                } else {
+                    addressElement.textContent = 'Не указан';
+                    addressElement.classList.add('empty');
+                }
+            }
+
+            // Показываем сообщение о завершении заявки
+            if (applicationState.is_complete) {
+                let completeMsg = contentElement.querySelector('.application-complete');
+                if (!completeMsg) {
+                    completeMsg = document.createElement('div');
+                    completeMsg.className = 'application-complete';
+                    contentElement.appendChild(completeMsg);
+                }
+                completeMsg.textContent = '✅ Заявка заполнена полностью';
+            } else {
+                const completeMsg = contentElement.querySelector('.application-complete');
+                if (completeMsg) {
+                    completeMsg.remove();
+                }
+            }
+        }
+
+        // Получение информации о тарифе
+        function getTariffInfo(city, tariff) {
+            const tariffs = {
+                'Краснодар': {
+                    'Зеленый': { speed: '10 Гбит/с', price: 100 },
+                    'Желтый': { speed: '20 Гбит/с', price: 200 },
+                    'Красный': { speed: '30 Гбит/с', price: 300 }
+                },
+                'Станица Выселки': {
+                    'Аметист': { speed: '10 Гбит/с', price: 110 },
+                    'Топаз': { speed: '20 Гбит/с', price: 220 },
+                    'Брильянт': { speed: '30 Гбит/с', price: 330 }
+                }
+            };
+
+            if (city && tariff && tariffs[city] && tariffs[city][tariff]) {
+                return tariffs[city][tariff];
+            }
+            return null;
+        }
+
         // Загружаем список моделей при загрузке страницы
         window.addEventListener('load', () => {
             loadModels();
+            // Инициализируем блок заявки
+            updateApplicationBlock();
         });
     </script>
 </body>
