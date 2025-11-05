@@ -2,6 +2,19 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Important Rules
+
+**DO NOT create any of the following without explicit user request:**
+- Documentation files (guides, tutorials, READMEs, etc.)
+- Instructions or how-to documents
+- Long explanatory texts or descriptions
+- Example code files
+
+**Instead:**
+- Answer questions directly and concisely
+- Provide short inline code examples when needed
+- Only create/modify code files that are part of the actual implementation
+
 ## Project Overview
 
 This is a **local voice AI assistant** that runs entirely offline. It provides a conversational interface where users can speak questions and receive spoken responses.
