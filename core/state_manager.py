@@ -158,6 +158,38 @@ class StateManager:
         """Сбросить таймер тишины"""
         self.silence_start_time = None
 
+    def start_greeting(self, estimated_duration: float, total_bytes: int):
+        """
+        Начать отслеживание приветствия
+
+        Args:
+            estimated_duration: оценочная длительность приветствия в секундах
+            total_bytes: общее количество байт аудио приветствия
+        """
+        self.is_greeting_active = True
+        self.greeting_start_time = datetime.now()
+        self.greeting_estimated_duration = estimated_duration
+        self.greeting_total_bytes = total_bytes
+        self.greeting_bytes_sent = 0
+
+    def end_greeting(self):
+        """Завершить отслеживание приветствия"""
+        self.is_greeting_active = False
+        self.greeting_start_time = None
+        self.greeting_estimated_duration = None
+        self.greeting_bytes_sent = 0
+        self.greeting_total_bytes = None
+
+    def update_greeting_progress(self, bytes_sent: int):
+        """
+        Обновить прогресс отправки приветствия
+
+        Args:
+            bytes_sent: количество байт аудио, отправленных в последнем чанке
+        """
+        if self.is_greeting_active:
+            self.greeting_bytes_sent += bytes_sent
+
     def get_state_info(self):
         """
         Получить информацию о текущем состоянии
