@@ -896,7 +896,10 @@
 
         ws.onmessage = (event) => {
           const data = JSON.parse(event.data);
-          console.log("📨 Получено:", data);
+          // Не логируем audio_chunk - слишком частые сообщения
+          if (data.type !== "audio_chunk") {
+            console.log("📨 Получено:", data);
+          }
 
           switch (data.type) {
             case "state":
@@ -1819,7 +1822,6 @@
 
       // Обработка конца потокового ответа
       function handleStreamEnd(fullText) {
-
         // Обновляем финальный текст если нужно
         if (fullText && currentStreamingText !== fullText) {
           currentStreamingText = fullText;

@@ -97,6 +97,67 @@
     // Git
     "git.ignoreLimitWarning": true,
 
+    // ============ CONTINUE AI НАСТРОЙКИ ============
+
+    // Continue базовые настройки
+    "continue.enableTabAutocomplete": true,
+    "continue.pauseTabAutocompleteOnBattery": false,  // M4 Max энергоэффективный
+    "continue.showSuggestionInGhostText": true,
+    "continue.enableDebugLogs": false,
+
+    // Оптимизация для больших моделей на M4 Max
+    // qwen2.5-coder: 32768, deepseek-coder-v2: 163840, llama3.1: 131072
+    "continue.maxContextLength": 32768,  // Увеличено для лучшего понимания кода
+    "continue.chunkSize": 1000,  // Увеличено для более эффективной обработки
+    "continue.streamResponse": true,
+
+    // Автокомплит настройки
+    "continue.tabAutocompleteOptions": {
+        "multilineCompletions": "always",
+        "maxPromptTokens": 2000,
+        "debounceDelay": 150,
+        "maxSuffixTokens": 1000,
+        "triggers": {
+            "python": ["def ", "class ", "if ", "for ", "while ", "import ", "from "],
+            "javascript": ["function ", "const ", "let ", "var ", "if ", "for "],
+            "typescript": ["function ", "const ", "let ", "var ", "interface ", "type "]
+        }
+    },
+
+    // Горячие клавиши для Continue
+    "continue.shortcuts": {
+        "accept": "Tab",
+        "reject": "Escape",
+        "toggleChat": "cmd+l",
+        "inlineEdit": "cmd+shift+k",
+        "quickActions": "cmd+shift+l"
+    },
+
+    // Отключаем конфликтующие AI функции
+    "cursor.copilotEnabled": false,  // Если есть GitHub Copilot
+    "github.copilot.enable": false,  // Отключаем GitHub Copilot
+
+    // Continue UI настройки
+    "continue.showInlineCompletions": true,
+    "continue.showStatusBar": true,
+    "continue.suggestionDelay": 200,
+
+    // Настройки для Python с Continue
+    "continue.pythonOptions": {
+        "useBlackFormatter": true,
+        "maxLineLength": 120,
+        "includeDocstrings": true,
+        "includeTypeHints": true
+    },
+
+    // Разрешения для инструментов Continue
+    "continue.allowCodeActions": true,
+    "continue.allowFileRead": true,
+    "continue.allowFileWrite": true,
+    "continue.allowTerminalCommands": true,
+
+    // ============ КОНЕЦ CONTINUE НАСТРОЕК ============
+
     // Specific file type settings
     "[json]": {
         "editor.defaultFormatter": "esbenp.prettier-vscode",
@@ -123,4 +184,3 @@
         }
     }
 }
-

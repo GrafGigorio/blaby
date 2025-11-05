@@ -1,0 +1,304 @@
+name: LM Studio - Real Models Setup
+version: 1.0.0
+schema: v1
+
+# ========================================
+# LM Studio Configuration
+# Оптимизировано для реальных загруженных моделей
+# ========================================
+
+models:
+  # ==========================================
+  # AGENT MODE - Function calling models
+  # ==========================================
+
+  - name: 🤖 Agent (Mistral Small)
+    provider: lmstudio
+    model: mistralai/magistral-small-2509
+    apiBase: http://localhost:1234/v1
+    roles:
+      - chat
+      - edit
+      - apply
+      - agent  # ← Function calling support
+      - plan
+    chatOptions:
+      temperature: 0.7
+      maxTokens: 12000
+      baseSystemMessage: |
+        You are an expert coding assistant with access to powerful MCP tools.
+        Available tools: Context7 (docs), Playwright (browser), Filesystem,
+        Brave Search, Git, Memory, Sequential Thinking, Docker, Time, Puppeteer.
+        Use tools when needed. Write clean, efficient code.
+
+  - name: 🧠 Agent Pro (Qwen3 30B)
+    provider: lmstudio
+    model: qwen/qwen3-coder-30b
+    apiBase: http://localhost:1234/v1
+    roles:
+      - chat
+      - edit
+      - apply
+      - agent
+      - plan
+    chatOptions:
+      temperature: 0.7
+      maxTokens: 16000
+      baseSystemMessage: |
+        You are a senior software architect. Leverage MCP tools for comprehensive solutions.
+        Available: Context7, Playwright, Filesystem, Brave Search, Git, Memory,
+        Sequential Thinking, Docker, Time, Puppeteer.
+        Consider performance, scalability, and maintainability.
+
+  - name: 🔮 Agent Alt (Gemma 27B)
+    provider: lmstudio
+    model: gemma-3-27b-it-qat
+    apiBase: http://localhost:1234/v1
+    roles:
+      - chat
+      - edit
+      - apply
+      - agent
+      - plan
+    chatOptions:
+      temperature: 0.7
+      maxTokens: 10000
+      baseSystemMessage: |
+        You are a helpful coding assistant with tool access.
+        Use MCP tools when appropriate: Git, Filesystem, Context7, Docker, etc.
+        Write clear, maintainable code with proper documentation.
+
+  - name: 💡 Agent (GPT-OSS 20B)
+    provider: lmstudio
+    model: openai/gpt-oss-20b
+    apiBase: http://localhost:1234/v1
+    roles:
+      - chat
+      - edit
+      - apply
+      - agent
+      - plan
+    chatOptions:
+      temperature: 0.7
+      maxTokens: 10000
+      baseSystemMessage: |
+        You are an AI coding assistant with MCP tool access.
+        Tools: Git, Memory, Filesystem, Context7, Docker, Time.
+        Provide clear explanations and working code.
+
+  # ==========================================
+  # CHAT MODE - Fast models for quick tasks
+  # ==========================================
+
+  - name: ⚡ Fast (Qwen3 30B)
+    provider: lmstudio
+    model: qwen/qwen3-coder-30b
+    apiBase: http://localhost:1234/v1
+    roles:
+      - chat
+      - edit
+      - apply
+    chatOptions:
+      temperature: 0.7
+      maxTokens: 8000
+      baseSystemMessage: |
+        You are a fast, efficient coding assistant.
+        Write clean code, be concise, follow best practices.
+
+  - name: 💪 Power (Mistral Small)
+    provider: lmstudio
+    model: mistralai/magistral-small-2509
+    apiBase: http://localhost:1234/v1
+    roles:
+      - chat
+      - edit
+      - apply
+    chatOptions:
+      temperature: 0.7
+      maxTokens: 12000
+      baseSystemMessage: |
+        You are a senior developer. Write production-quality code.
+        Consider edge cases, error handling, and performance.
+
+  - name: 🔍 Alternative (Gemma 27B)
+    provider: lmstudio
+    model: gemma-3-27b-it-qat
+    apiBase: http://localhost:1234/v1
+    roles:
+      - chat
+      - edit
+      - apply
+    chatOptions:
+      temperature: 0.7
+      maxTokens: 10000
+      baseSystemMessage: |
+        Expert in multiple programming languages.
+        Focus on code quality, testing, and documentation.
+
+  - name: 📝 Balanced (GPT-OSS 20B)
+    provider: lmstudio
+    model: openai/gpt-oss-20b
+    apiBase: http://localhost:1234/v1
+    roles:
+      - chat
+      - edit
+      - apply
+    chatOptions:
+      temperature: 0.7
+      maxTokens: 8000
+      baseSystemMessage: |
+        You are a helpful coding assistant.
+        Write clear, maintainable code with good practices.
+
+  # ==========================================
+  # VISION MODELS (если нужна работа с изображениями)
+  # ==========================================
+
+  - name: 👁️ Vision (Qwen3-VL 30B)
+    provider: lmstudio
+    model: qwen/qwen3-vl-30b
+    apiBase: http://localhost:1234/v1
+    roles:
+      - chat
+    chatOptions:
+      temperature: 0.7
+      maxTokens: 4000
+      baseSystemMessage: |
+        You are a multimodal AI that can analyze images and code.
+        Provide detailed descriptions and code solutions.
+
+  - name: 👁️‍🗨️ Vision Fast (Qwen3-VL 8B)
+    provider: lmstudio
+    model: qwen/qwen3-vl-8b
+    apiBase: http://localhost:1234/v1
+    roles:
+      - chat
+    chatOptions:
+      temperature: 0.7
+      maxTokens: 4000
+      baseSystemMessage: |
+        Fast multimodal AI for image and code analysis.
+
+# Автокомплит (используем эмбеддинг модель для контекста)
+tabAutocomplete:
+  provider: lmstudio
+  model: qwen/qwen3-coder-30b
+  apiBase: http://localhost:1234/v1
+  debounceDelay: 150
+  multilineCompletions: true
+  maxPromptTokens: 6000
+
+# Контекстные провайдеры
+context:
+  - provider: file     # @filename синтаксис
+  - provider: code     # Семантический поиск
+  - provider: diff     # Git изменения
+
+# Кастомные команды
+customCommands:
+  - name: explain
+    description: "Объяснить код"
+    prompt: "Объясни этот код простым языком. Опиши что он делает, какие паттерны используются."
+
+  - name: refactor
+    description: "Рефакторинг"
+    prompt: "Отрефактори код: улучши читаемость, производительность, следуй best practices."
+
+  - name: test
+    description: "Написать тесты"
+    prompt: "Напиши тесты для этого кода. Используй подходящий фреймворк. Покрой edge cases."
+
+  - name: fix
+    description: "Исправить ошибку"
+    prompt: "Найди и исправь ошибку. Объясни в чём была проблема и как исправление её решает."
+
+  - name: optimize
+    description: "Оптимизировать"
+    prompt: "Оптимизируй код по производительности и памяти. Объясни улучшения."
+
+  - name: document
+    description: "Документация"
+    prompt: "Добавь документацию: docstrings, комментарии для сложных частей, примеры."
+
+  - name: secure
+    description: "Безопасность"
+    prompt: "Проверь на уязвимости: SQL injection, XSS, command injection. Предложи исправления."
+
+  - name: analyze
+    description: "Анализ проекта"
+    prompt: |
+      Проанализируй проект используя MCP инструменты:
+      1. Git - посмотри историю и структуру
+      2. Filesystem - изучи файлы
+      3. Sequential Thinking - сделай план анализа
+      Дай подробный отчёт об архитектуре и качестве кода.
+
+  - name: deploy
+    description: "План деплоя"
+    prompt: |
+      Создай план деплоя используя:
+      1. Docker MCP - проверь контейнеры
+      2. Git MCP - текущее состояние
+      3. Sequential Thinking - создай пошаговый план
+      Предложи стратегию деплоя.
+
+# ========================================
+# MCP SERVERS CONFIGURED
+# ========================================
+#
+# ✅ Активные MCP серверы:
+#
+# 1. Context7 - Документация библиотек
+# 2. Playwright - Автоматизация браузера
+# 3. Filesystem - Работа с файлами
+# 4. Brave Search - Поиск в интернете
+# 5. Git - Git операции
+# 6. Memory - Долговременная память
+# 7. Sequential Thinking - Планирование
+# 8. Docker - Управление контейнерами
+# 9. Time - Работа со временем
+# 10. Puppeteer - Дополнительная автоматизация
+#
+# ⚙️ Требуют настройки (закомментированы):
+# - PostgreSQL (настройте в .continue/mcpServers/postgres.yaml)
+# - MySQL (настройте в .continue/mcpServers/mysql.yaml)
+#
+# ========================================
+
+# ========================================
+# USAGE TIPS
+# ========================================
+#
+# 🎯 Рекомендуемые модели для разных задач:
+#
+# Agent режим (с MCP инструментами):
+#   1. Mistral Magistral Small - лучший баланс
+#   2. Qwen3-Coder 30B - максимальная мощность
+#   3. Gemma 27B - альтернатива
+#
+# Быстрый Chat (без инструментов):
+#   1. Qwen3-Coder 30B - топ для кода
+#   2. Mistral Small - универсальный
+#   3. GPT-OSS 20B - сбалансированный
+#
+# Работа с изображениями:
+#   1. Qwen3-VL 30B - лучшее качество
+#   2. Qwen3-VL 8B - быстрее
+#
+# 🚀 Переключение моделей:
+# - В Continue: Cmd + Shift + L
+# - В LM Studio: Stop Server → Load другую модель → Start Server
+#
+# ⚡ Производительность на M4 Max:
+# - Mistral Small (~22B): 30-45 tok/s
+# - Qwen3-Coder 30B: 25-35 tok/s
+# - Gemma 27B: 28-40 tok/s
+# - GPT-OSS 20B: 35-50 tok/s
+#
+# 💡 Советы:
+# - Держите в RAM 1-2 модели одновременно
+# - Для Agent задач: Mistral или Qwen3
+# - Для быстрого кодинга: Qwen3-Coder
+# - GPU offload = 100% в LM Studio
+#
+# ========================================

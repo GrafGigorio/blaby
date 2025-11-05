@@ -1,13 +1,15 @@
 """
 State Manager для управления состояниями диалогового режима
 """
-from enum import Enum
+
 from datetime import datetime
+from enum import Enum
 from typing import Optional
 
 
 class DialogState(Enum):
     """Состояния диалога"""
+
     IDLE = "idle"  # Ожидание
     LISTENING = "listening"  # Слушает пользователя
     PROCESSING = "processing"  # Обрабатывает запрос (STT + LLM + TTS)
@@ -24,6 +26,14 @@ class StateManager:
         self.conversation_history = []
         self.current_transcript = ""  # Текущая промежуточная расшифровка
         self.silence_start_time = None  # Время начала тишины
+        # Защита приветствия от прерывания
+        self.is_greeting_active = False  # Флаг активного приветствия
+        self.greeting_start_time = None  # Время начала приветствия
+        self.greeting_estimated_duration = (
+            None  # Оценочная длительность приветствия (секунды)
+        )
+        self.greeting_bytes_sent = 0  # Количество байт аудио отправлено
+        self.greeting_total_bytes = None  # Общее количество байт приветствия
 
     def transition_to(self, new_state: DialogState):
         """
@@ -45,13 +55,38 @@ class StateManager:
         Returns:
             bool: True если можно прервать (например, во время SPEAKING)
         """
-        return self.current_state == DialogState.SPEAKING
+        # Можно прервать только во время SPEAKING
+        if self.current_state != DialogState.SPEAKING:
+            return False
+
+        # Если это приветствие, проверяем что прошло больше половины
+        if self.is_greeting_active:
+            # Проверяем по времени
+            if self.greeting_start_time and self.greeting_estimated_duration:
+                elapsed = (datetime.now() - self.greeting_start_time).total_seconds()
+                # Можно прервать только если прошло больше 50% от оценочной длительности
+                if elapsed < self.greeting_estimated_duration * 0.5:
+                    return False
+
+            # Проверяем по количеству отправленных байт
+            if self.greeting_total_bytes and self.greeting_total_bytes > 0:
+                progress = self.greeting_bytes_sent / self.greeting_total_bytes
+                # Можно прервать только если отправлено больше 50%
+                if progress < 0.5:
+                    return False
+
+        return True
 
     def reset(self):
         """Сброс состояния в IDLE"""
         self.transition_to(DialogState.IDLE)
         self.current_transcript = ""
         self.silence_start_time = None
+        self.is_greeting_active = False
+        self.greeting_start_time = None
+        self.greeting_estimated_duration = None
+        self.greeting_bytes_sent = 0
+        self.greeting_total_bytes = None
 
     def start_listening(self):
         """Начать слушать пользователя"""
@@ -92,11 +127,9 @@ class StateManager:
             role: роль (user/assistant)
             text: текст сообщения
         """
-        self.conversation_history.append({
-            "role": role,
-            "text": text,
-            "timestamp": datetime.now().isoformat()
-        })
+        self.conversation_history.append(
+            {"role": role, "text": text, "timestamp": datetime.now().isoformat()}
+        )
 
     def get_history(self):
         """Получить историю разговора"""
@@ -134,9 +167,11 @@ class StateManager:
         """
         return {
             "current_state": self.current_state.value,
-            "previous_state": self.previous_state.value if self.previous_state else None,
+            "previous_state": (
+                self.previous_state.value if self.previous_state else None
+            ),
             "state_duration": (datetime.now() - self.state_change_time).total_seconds(),
             "current_transcript": self.current_transcript,
             "history_length": len(self.conversation_history),
-            "silence_duration": self.get_silence_duration()
+            "silence_duration": self.get_silence_duration(),
         }

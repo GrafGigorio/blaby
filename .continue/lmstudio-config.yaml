@@ -1,0 +1,285 @@
+name: LM Studio Local Setup
+version: 1.0.0
+schema: v1
+
+# ========================================
+# LM Studio Configuration for Continue
+# ========================================
+#
+# ВАЖНО: Перед использованием:
+# 1. Откройте LM Studio
+# 2. Перейдите на вкладку "Local Server"
+# 3. Загрузите рекомендуемые модели (см. раздел RECOMMENDED MODELS ниже)
+# 4. Запустите Local Server (порт 1234 по умолчанию)
+# 5. Скопируйте этот файл в .continue/config.yaml
+#
+# ========================================
+
+# Модели для разных задач
+models:
+  # ==========================================
+  # AGENT MODE - Модели с поддержкой function calling
+  # Используйте для автоматизации и работы с MCP инструментами
+  # ==========================================
+
+  - name: 🤖 Agent (Hermes 8B)
+    provider: lmstudio
+    model: hermes-3-llama-3.1-8b
+    apiBase: http://localhost:1234/v1
+    roles:
+      - chat
+      - edit
+      - apply
+      - agent  # ← Поддержка Agent режима с function calling
+      - plan   # ← Поддержка Plan режима
+    chatOptions:
+      temperature: 0.7
+      maxTokens: 8000
+      baseSystemMessage: |
+        You are an expert coding assistant with access to powerful tools via MCP.
+        Use tools when needed: Context7 for docs, Playwright for browser automation,
+        Filesystem for file operations, Brave Search for web search.
+        Write clean, efficient code following best practices.
+
+  - name: 🧠 Agent Pro (Mistral 22B)
+    provider: lmstudio
+    model: mistral-small-instruct-2409
+    apiBase: http://localhost:1234/v1
+    roles:
+      - chat
+      - edit
+      - apply
+      - agent
+      - plan
+    chatOptions:
+      temperature: 0.7
+      maxTokens: 12000
+      baseSystemMessage: |
+        You are a senior software architect with access to comprehensive tooling.
+        Leverage MCP tools for documentation, testing, and file operations.
+        Consider performance, scalability, and maintainability in all solutions.
+
+  # ==========================================
+  # CHAT MODE - Быстрые модели для обычного общения
+  # Используйте для простых вопросов и быстрых правок
+  # ==========================================
+
+  - name: ⚡ Fast Chat (7B)
+    provider: lmstudio
+    model: qwen2.5-coder-7b-instruct
+    apiBase: http://localhost:1234/v1
+    roles:
+      - chat
+      - edit
+      - apply
+    chatOptions:
+      temperature: 0.7
+      maxTokens: 4000
+      baseSystemMessage: |
+        You are a helpful coding assistant. Write clean, efficient code.
+        Be concise and focused. Follow modern best practices.
+
+  - name: 💪 Power Chat (32B)
+    provider: lmstudio
+    model: qwen2.5-coder-32b-instruct
+    apiBase: http://localhost:1234/v1
+    roles:
+      - chat
+      - edit
+      - apply
+    chatOptions:
+      temperature: 0.7
+      maxTokens: 8000
+      baseSystemMessage: |
+        You are a senior developer. Write production-quality code.
+        Consider edge cases, error handling, and performance.
+        Use modern language features and design patterns.
+
+  # ==========================================
+  # SPECIALIZED - Специализированные модели
+  # ==========================================
+
+  - name: 🔍 DeepSeek (16B)
+    provider: lmstudio
+    model: deepseek-coder-v2-16b-instruct
+    apiBase: http://localhost:1234/v1
+    roles:
+      - chat
+      - edit
+      - apply
+    chatOptions:
+      temperature: 0.7
+      maxTokens: 6000
+      baseSystemMessage: |
+        Expert in multiple programming languages and frameworks.
+        Strong focus on code quality, testing, and documentation.
+
+# Автокомплит
+tabAutocomplete:
+  provider: lmstudio
+  model: starcoder2-3b
+  apiBase: http://localhost:1234/v1
+  debounceDelay: 150
+  multilineCompletions: true
+  maxPromptTokens: 4000
+  template: |
+    # Language: {{{ language }}}
+    # File: {{{ currentFile }}}
+    # Context:
+    {{{ context }}}
+    # Complete this code:
+
+# Контекстные провайдеры
+context:
+  - provider: file     # @filename синтаксис
+  - provider: code     # Семантический поиск
+  - provider: diff     # Git изменения
+
+# Кастомные команды
+customCommands:
+  - name: explain
+    description: "Объяснить код"
+    prompt: "Объясни этот код простым языком. Опиши что он делает, какие паттерны используются, и возможные проблемы."
+
+  - name: refactor
+    description: "Рефакторинг кода"
+    prompt: "Отрефактори этот код: улучши читаемость, производительность, следуй best practices. Объясни изменения."
+
+  - name: test
+    description: "Написать тесты"
+    prompt: "Напиши тесты для этого кода. Используй подходящий фреймворк (pytest/jest/etc). Покрой edge cases."
+
+  - name: fix
+    description: "Исправить ошибку"
+    prompt: "Найди и исправь ошибку. Объясни в чём была проблема и как исправление её решает."
+
+  - name: optimize
+    description: "Оптимизировать"
+    prompt: "Оптимизируй этот код по производительности и использованию памяти. Объясни улучшения."
+
+  - name: document
+    description: "Добавить документацию"
+    prompt: "Добавь документацию: docstrings, комментарии для сложных частей, примеры использования."
+
+  - name: secure
+    description: "Проверить безопасность"
+    prompt: "Проверь код на уязвимости безопасности. Найди SQL injection, XSS, command injection и другие проблемы. Предложи исправления."
+
+# ========================================
+# RECOMMENDED MODELS FOR MAC M4 MAX (48GB)
+# ========================================
+#
+# 🚀 ОПТИМИЗИРОВАНО ДЛЯ APPLE SILICON M4 MAX
+# - Metal GPU ускорение активно по умолчанию
+# - 48GB RAM позволяет использовать крупные модели
+# - Рекомендуем Q5_K_M или Q6_K для лучшего качества
+#
+# Скачайте эти модели через LM Studio (⬇️ Search):
+#
+# ✅ TIER 1 - ОБЯЗАТЕЛЬНЫЕ (для Agent режима с function calling):
+#
+# 1. NousResearch/Hermes-3-Llama-3.1-8B-GGUF
+#    - Размер: ~6GB (Q5_K_M рекомендовано для M4)
+#    - Отличная поддержка function calling
+#    - Инференс: ~50-80 токенов/сек на M4 Max
+#    - ID для конфига: hermes-3-llama-3.1-8b
+#    ⭐ Лучший выбор для начала
+#
+# 2. mistralai/Mistral-Small-Instruct-2409-GGUF (22B)
+#    - Размер: ~16GB (Q5_K_M)
+#    - Профессиональный function calling
+#    - Инференс: ~30-45 токенов/сек
+#    - ID для конфига: mistral-small-instruct-2409
+#    ⭐ Лучшее качество для Agent режима
+#
+# 💎 TIER 2 - МОЩНЫЕ МОДЕЛИ (используйте всю мощь M4 Max):
+#
+# 3. Qwen/Qwen2.5-Coder-32B-Instruct-GGUF
+#    - Размер: ~23GB (Q5_K_M) - влезет комфортно!
+#    - Топ для кодирования
+#    - Инференс: ~25-35 токенов/сек
+#    - ID: qwen2.5-coder-32b-instruct
+#    ⭐ Рекомендовано как основная рабочая модель
+#
+# 4. deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct-GGUF (16B)
+#    - Размер: ~11GB (Q5_K_M)
+#    - Отличный баланс скорость/качество
+#    - Инференс: ~40-60 токенов/сек
+#    - ID: deepseek-coder-v2-16b-instruct
+#
+# ⚡ TIER 3 - БЫСТРЫЕ (для автокомплита и простых задач):
+#
+# 5. Qwen/Qwen2.5-Coder-7B-Instruct-GGUF
+#    - Размер: ~5GB (Q6_K для максимального качества)
+#    - Очень быстрый на M4 Max
+#    - Инференс: ~80-120 токенов/сек
+#    - ID: qwen2.5-coder-7b-instruct
+#
+# 6. bigcode/starcoder2-3b-GGUF
+#    - Размер: ~2GB (Q6_K)
+#    - Специально для автокомплита
+#    - Инференс: ~150+ токенов/сек
+#    - ID: starcoder2-3b
+#
+# 🎯 РЕКОМЕНДУЕМЫЙ НАБОР ДЛЯ НАЧАЛА:
+# - Hermes-3-8B (Agent режим) - 6GB
+# - Qwen2.5-Coder-32B (основная работа) - 23GB
+# - StarCoder2-3B (автокомплит) - 2GB
+# Итого: ~31GB - комфортно влезет в 48GB
+#
+# 💪 МАКСИМАЛЬНАЯ КОНФИГУРАЦИЯ:
+# - Mistral-Small-22B (Agent) - 16GB
+# - Qwen2.5-Coder-32B (работа) - 23GB
+# - DeepSeek-16B (резерв) - 11GB
+# - StarCoder2-3B (автокомплит) - 2GB
+# Итого: ~52GB - будет использовать swap, но работать быстро
+#
+# 📝 ПРИМЕЧАНИЯ:
+# - На M4 Max можно смело использовать Q5_K_M или Q6_K квантизацию
+# - Metal GPU даёт 2-3x ускорение vs CPU
+# - Рекомендую держать 2-3 модели одновременно в RAM
+# - LM Studio умеет быстро переключать модели (~2-5 сек)
+#
+# ========================================
+# HOW TO USE
+# ========================================
+#
+# 1. В LM Studio:
+#    - Скачайте хотя бы Hermes-3-Llama-3.1-8B
+#    - Перейдите на вкладку "Local Server"
+#    - Загрузите модель в сервер
+#    - Нажмите "Start Server"
+#
+# 2. В Continue:
+#    - Скопируйте этот файл: cp .continue/lmstudio-config.yaml .continue/config.yaml
+#    - Перезапустите VS Code
+#    - Используйте Cmd+L для чата
+#    - Используйте Cmd+I для inline редактирования
+#
+# 3. Режимы работы:
+#    - Chat Mode: Обычное общение, правки кода
+#    - Agent Mode: Автоматическое использование инструментов (требует модели с function calling)
+#    - Plan Mode: Планирование и выполнение сложных задач (требует function calling)
+#
+# ========================================
+# TROUBLESHOOTING
+# ========================================
+#
+# ❌ "Failed to connect to LM Studio"
+#    → Убедитесь что Local Server запущен в LM Studio
+#    → Проверьте порт (по умолчанию 1234)
+#
+# ❌ "Model not found"
+#    → Проверьте что модель загружена в Local Server
+#    → ID модели должен совпадать с model: в конфиге
+#
+# ❌ "Function calling not supported"
+#    → Используйте модели с поддержкой tools (Hermes, Mistral)
+#    → Не все модели поддерживают Agent режим
+#
+# ❌ Медленная работа
+#    → Используйте меньшие модели (7B-8B)
+#    → Снизьте maxTokens в chatOptions
+#    → Используйте квантованные версии (Q4_K_M)
+#
+# ========================================

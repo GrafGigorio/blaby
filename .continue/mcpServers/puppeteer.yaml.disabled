@@ -1,0 +1,10 @@
+name: Puppeteer MCP Server
+version: 0.0.1
+schema: v1
+mcpServers:
+  - name: Puppeteer
+    command: npx
+    args:
+      - -y
+      - "@modelcontextprotocol/server-puppeteer"
+    env: {}

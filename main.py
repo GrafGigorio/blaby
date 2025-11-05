@@ -394,28 +394,55 @@ async def send_greeting_directly(
 
         print("👋 Отправка приветствия напрямую...")
 
+        # Очищаем текст от markdown и спецсимволов
+        cleaned_greeting = clean_text_from_markdown(greeting_text)
+
+        # Собираем все аудио чанки чтобы знать общий размер
+        audio_chunks = []
+        async for audio_chunk in tts_module.synthesize_stream(
+            cleaned_greeting, language="ru"
+        ):
+            audio_chunks.append(audio_chunk)
+
+        # Вычисляем общий размер аудио и оценочную длительность
+        total_bytes = sum(len(chunk) for chunk in audio_chunks)
+        # Примерная оценка: ~8000 байт в секунду для MP3 (может варьироваться)
+        # Или используем оценку по тексту: ~3-4 секунды на 100 символов
+        text_length = len(cleaned_greeting)
+        estimated_duration = max(
+            text_length * 0.04, 5.0
+        )  # Минимум 5 секунд, ~40мс на символ
+
+        # Начинаем отслеживание приветствия
+        state.start_greeting(
+            estimated_duration=estimated_duration, total_bytes=total_bytes
+        )
+
         # Отправляем начало потока
         await websocket.send_json({"type": "stream_start"})
 
         # Сразу отправляем текст приветствия для отображения
         await websocket.send_json({"type": "text_chunk", "text": greeting_text})
 
-        # Очищаем текст от markdown и спецсимволов
-        cleaned_greeting = clean_text_from_markdown(greeting_text)
-
-        # Синтезируем речь и отправляем аудио чанки
-        async for audio_chunk in tts_module.synthesize_stream(
-            cleaned_greeting, language="ru"
-        ):
-            # Проверяем прерывание
+        # Отправляем аудио чанки и отслеживаем прогресс
+        for audio_chunk in audio_chunks:
+            # Проверяем прерывание (но can_interrupt уже защитит от прерывания до 50%)
             if generation_interrupted.is_set():
                 print("⚠️ Приветствие прервано!")
+                state.end_greeting()
                 return
 
+            # Отправляем чанк
             audio_base64 = base64.b64encode(audio_chunk).decode("utf-8")
             await websocket.send_json({"type": "audio_chunk", "data": audio_base64})
 
+            # Обновляем прогресс отправки
+            state.update_greeting_progress(len(audio_chunk))
+
         print("✅ Приветствие отправлено")
+
+        # Завершаем отслеживание приветствия
+        state.end_greeting()
 
         # Отправляем конец потока
         await websocket.send_json({"type": "stream_end", "text": greeting_text})
@@ -435,6 +462,8 @@ async def send_greeting_directly(
         import traceback
 
         traceback.print_exc()
+        # Убеждаемся что флаг приветствия сброшен даже при ошибке
+        state.end_greeting()
         raise
 
 
@@ -723,6 +752,10 @@ async def websocket_voice_endpoint(websocket: WebSocket):
                 # Сбрасываем action_manager
                 action_manager.reset()
                 greeting_sent = False
+                # Сбрасываем приветствие если оно активно
+                if state.is_greeting_active:
+                    state.end_greeting()
+                    print("🔚 Приветствие сброшено при начале нового диалога")
 
                 # Начинаем слушать
                 print("🎧 Начало прослушивания...")
@@ -757,6 +790,7 @@ async def websocket_voice_endpoint(websocket: WebSocket):
 
                         traceback.print_exc()
                     # После приветствия возвращаемся в listening
+                    # Приветствие уже завершено в send_greeting_directly через state.end_greeting()
                     state.start_listening()
                     await websocket.send_json({"type": "state", "state": "listening"})
                     recognizer = streaming_stt_module.create_recognizer()
@@ -989,6 +1023,11 @@ async def websocket_voice_endpoint(websocket: WebSocket):
                     # Очищаем задачу
                     generation_task = None
 
+                    # Завершаем приветствие если оно активно
+                    if state.is_greeting_active:
+                        state.end_greeting()
+                        print("🔚 Приветствие завершено после прерывания")
+
                     state.start_listening()
 
                     # Создаем новый recognizer
@@ -999,9 +1038,35 @@ async def websocket_voice_endpoint(websocket: WebSocket):
                     await websocket.send_json({"type": "state", "state": "listening"})
                     print("✅ Отправлено состояние 'listening' после прерывания")
                 else:
-                    print(
-                        f"❌ Прерывание НЕ разрешено в состоянии {state.current_state.value}"
-                    )
+                    if state.is_greeting_active:
+                        # Вычисляем прогресс для лога
+                        progress_info = ""
+                        if (
+                            state.greeting_total_bytes
+                            and state.greeting_total_bytes > 0
+                        ):
+                            progress = (
+                                state.greeting_bytes_sent / state.greeting_total_bytes
+                            ) * 100
+                            progress_info = f" (прогресс: {progress:.1f}%)"
+                        elif (
+                            state.greeting_start_time
+                            and state.greeting_estimated_duration
+                        ):
+                            elapsed = (
+                                datetime.now() - state.greeting_start_time
+                            ).total_seconds()
+                            progress = (
+                                elapsed / state.greeting_estimated_duration
+                            ) * 100
+                            progress_info = f" (прогресс: {progress:.1f}%)"
+                        print(
+                            f"🛡️ Прерывание приветствия заблокировано - еще не прошло 50%{progress_info}"
+                        )
+                    else:
+                        print(
+                            f"❌ Прерывание НЕ разрешено в состоянии {state.current_state.value}"
+                        )
 
             elif message_type == "stop":
                 # Остановка диалога

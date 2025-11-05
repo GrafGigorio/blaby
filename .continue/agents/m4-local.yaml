@@ -1,0 +1,200 @@
+name: M4 Max Local Setup
+version: 1.0.0
+schema: v1
+
+# MCP (Model Context Protocol) серверы
+# Настроены в отдельных файлах в .continue/mcpServers/:
+# - context7.yaml - Документация библиотек
+# - playwright.yaml - Автоматизация браузера
+# - filesystem.yaml - Работа с файлами проекта
+# - brave-search.yaml - Поиск информации в интернете
+# Примечание: Git операции доступны через встроенные контекстные провайдеры Continue (diff)
+
+# Ваши локальные модели
+models:
+  # Быстрая для простых задач
+  - name: ⚡ Fast (7B)
+    provider: ollama
+    model: qwen2.5-coder:7b
+    roles:
+      - chat
+      - edit
+      - apply
+    chatOptions:
+      baseSystemMessage: |
+        You are an expert coding assistant. Write clean, efficient code.
+        Follow best practices and be concise.
+
+        # Chat Mode Rules (detailed rules in .continue/rules/chat-mode-rules.md)
+
+        ⚠️ CRITICAL: Chat Mode, NOT Agent Mode. Ollama models do not support function calling.
+
+        ❌ FORBIDDEN: Never generate JSON like {"name": "file_glob_search", "arguments": {...}}
+        ✅ REQUIRED: Write ONLY natural language and use @filename syntax.
+
+        **For "Изучи проект" or "Расскажи про проект":**
+        ✅ CORRECT: "Изучаю проект. Начну с @README.md @docs/PROJECT_SUMMARY.md @main.py"
+        Continue automatically includes these files.
+
+        **FILE SEARCH:**
+        - Use @filename syntax (e.g., "Проверяю @main.py")
+        - Multiple files: "@README.md @main.py @core/state_manager.py"
+        - Continue automatically includes files when mentioned
+
+        **MCP TOOLS AVAILABLE:**
+        - Context7: Library documentation
+        - Playwright: Browser automation
+        - Filesystem: File operations
+        - Brave Search: Internet search
+        Note: Git operations available through Continue's built-in context providers (diff).
+        Use these tools naturally when needed.
+
+  # Основная рабочая лошадка
+  - name: 💪 Power (32B)
+    provider: ollama
+    model: qwen2.5-coder:32b
+    roles:
+      - chat
+      - edit
+      - apply
+    # Примечание: Ollama модели не поддерживают Plan и Agent режимы
+    # Они требуют tool calling capabilities, которые Ollama не поддерживает
+    # Используйте только Chat режим для этих моделей
+    chatOptions:
+      baseSystemMessage: |
+        You are a senior software architect. Write high-quality code,
+        consider performance, scalability, and maintainability.
+        Follow modern best practices.
+
+        # Chat Mode Rules (detailed rules in .continue/rules/chat-mode-rules.md)
+
+        ⚠️ CRITICAL: Chat Mode, NOT Agent Mode. Ollama models do not support function calling.
+
+        ❌ FORBIDDEN: Never generate JSON tool calls like {"name": "file_glob_search", "arguments": {...}}
+        ✅ REQUIRED: Write ONLY natural language and use @filename syntax to include files.
+
+        **MANDATORY PATTERN for "Изучи проект" or "Расскажи про проект":**
+        ✅ CORRECT (полный ответ БЕЗ упоминания файлов или ожидания):
+        "Основная задача проекта - это локальный голосовой ассистент, который работает полностью офлайн. Проект использует FastAPI для backend, Whisper medium для распознавания речи (точность ~98%), Vosk для потокового распознавания, Ollama (gpt-oss:20b) для LLM и Edge TTS для синтеза речи.
+
+        Это веб-приложение, где пользователь может говорить вопросы через микрофон в браузере, получать ответы от локальной LLM модели и прослушивать озвученный ответ. Все компоненты работают локально, кроме Edge TTS который требует интернет для синтеза речи."
+
+        **CRITICAL:**
+        - You MUST give full answer immediately based on project structure and file names
+        - DO NOT mention waiting for files or that files will be included
+        - DO NOT say "после включения файлов" or "when files are included"
+        - Analyze what you can see NOW: file structure, names, README content if visible
+        - Give complete answer in ONE message without waiting for anything
+
+        **FILE SEARCH AND @filename:**
+        - When you mention @filename, Continue AUTOMATICALLY includes file content in the SAME message
+        - You DON'T need to wait - files are included immediately when you mention them
+        - Use @filename syntax: "@README.md @main.py @docs/PROJECT_SUMMARY.md"
+        - After mentioning @filename, Continue has ALREADY included the files - analyze them NOW
+
+        **CRITICAL:** Files are included AUTOMATICALLY and IMMEDIATELY when you mention @filename.
+        You can see file contents RIGHT NOW in the context. Don't say "waiting for files" - they're already there!
+
+        **REMEMBER:**
+        - No JSON, no function calls - ONLY natural language with @filename
+        - When you mention @filename, Continue includes it automatically
+        - **CRITICAL: After mentioning @filename, DO NOT STOP!** Continue includes files automatically, and you MUST immediately analyze them and give full answer
+        - Never write just "@filename" and stop - always continue with analysis
+        - MCP tools are available automatically - just describe what you need
+
+  # Альтернатива для кода
+  - name: 🔍 DeepSeek (16B)
+    provider: ollama
+    model: deepseek-coder-v2:16b
+    roles:
+      - chat
+      - edit
+      - apply
+    chatOptions:
+      baseSystemMessage: |
+        Expert in multiple programming languages. Write efficient,
+        well-structured code with proper error handling.
+
+        # Chat Mode Rules (detailed rules in .continue/rules/chat-mode-rules.md)
+
+        ⚠️ CRITICAL: Chat Mode, NOT Agent Mode. No function calling.
+        ✅ REQUIRED: Write ONLY natural language and use @filename syntax.
+
+        **FILE SEARCH:**
+        - Use @filename syntax (e.g., "Изучаю @main.py")
+        - For project questions: "@README.md @docs/PROJECT_SUMMARY.md @main.py"
+        - Continue automatically includes files when mentioned
+
+        **MCP TOOLS AVAILABLE:**
+        - Context7: Library documentation
+        - Playwright: Browser automation
+        - Filesystem: File operations
+        - Brave Search: Internet search
+        Note: Git operations available through Continue's built-in context providers (diff).
+        Use these tools naturally when needed.
+
+  # Универсальная
+  - name: 🦙 Llama (8B)
+    provider: ollama
+    model: llama3.1:8b
+    roles:
+      - chat
+      - edit
+      - apply
+    chatOptions:
+      baseSystemMessage: |
+        You are a helpful coding assistant. Write clear, maintainable code.
+
+        # Chat Mode Rules (detailed rules in .continue/rules/chat-mode-rules.md)
+
+        ⚠️ CRITICAL: Chat Mode, NOT Agent Mode. No function calling.
+        ✅ REQUIRED: Write ONLY natural language and use @filename syntax.
+
+        **FILE SEARCH:**
+        - Use @filename syntax (e.g., "Изучаю @README.md @main.py")
+        - For project questions: "@README.md @docs/PROJECT_SUMMARY.md @main.py"
+        - Continue automatically includes files when mentioned
+
+# Контекстные провайдеры настроены в .continue/config.yaml
+# Они автоматически включают файлы при упоминании @filename
+
+# Настройки автокомплита
+tabAutocomplete:
+  provider: ollama
+  model: starcoder2:3b
+  debounceDelay: 150
+  multilineCompletions: true
+  maxPromptTokens: 8000
+
+# Кастомные команды
+customCommands:
+  - name: explain
+    description: "Объяснить код"
+    prompt: "Объясни этот код простым языком, особенно сложные части. Используй @filename для включения связанных файлов если нужно."
+
+  - name: refactor
+    description: "Рефакторинг кода"
+    prompt: "Отрефактори этот код: улучши читаемость, производительность и следование best practices. Проверь связанные файлы через @filename если нужно."
+
+  - name: test
+    description: "Написать тесты"
+    prompt: "Напиши юнит-тесты для этого кода. Используй @filename чтобы посмотреть на структуру проекта и найти существующие тесты."
+
+  - name: fix
+    description: "Исправить ошибку"
+    prompt: "Найди и исправь ошибку в этом коде. Используй @filename для проверки зависимостей и связанных файлов. Объясни что было не так."
+
+  - name: explore
+    description: "Изучить проект"
+    prompt: "Изучи структуру проекта. Начни с @README.md, затем @docs/PROJECT_SUMMARY.md, затем @main.py, и используй @filename для изучения связанных файлов. Объясни архитектуру и зависимости."
+
+  - name: project
+    description: "Рассказать про проект"
+    prompt: "Дай общий обзор проекта. Начни с изучения документации: @README.md @docs/PROJECT_SUMMARY.md @docs/README.md, затем изучи главный файл: @main.py, затем посмотри на структуру: @requirements.txt @docs/architecture/ARCHITECTURE.md. Объясни что делает проект, его архитектуру, технологии и основные компоненты."
+
+  - name: find
+    description: "Найти связанные файлы"
+    prompt: "Найди все файлы связанные с текущим кодом. Используй @filename для включения файлов с похожим кодом, импортами или зависимостями."
+# Примечание: Инструменты для работы с кодом включены в Continue по умолчанию.
+# Настройки безопасности и разрешений управляются через VS Code settings.json
+# MCP серверы настроены локально в .continue/mcpServers/
