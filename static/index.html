@@ -1822,8 +1822,10 @@
 
       // Обработка конца потокового ответа
       function handleStreamEnd(fullText) {
-        // Обновляем финальный текст если нужно
-        if (fullText && currentStreamingText !== fullText) {
+        // Обновляем финальный текст ТОЛЬКО если currentStreamingText пустой
+        // (например, если не было text_chunk сообщений)
+        // Иначе используем уже накопленный текст из text_chunk
+        if (fullText && !currentStreamingText) {
           currentStreamingText = fullText;
           // Проверяем наличие currentStreamingMessage перед обращением к querySelector
           if (currentStreamingMessage) {
