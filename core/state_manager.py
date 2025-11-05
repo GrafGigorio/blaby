@@ -101,6 +101,38 @@ class StateManager:
         """Начать воспроизведение ответа"""
         self.transition_to(DialogState.SPEAKING)
 
+    def start_greeting(self, estimated_duration: float, total_bytes: int):
+        """
+        Начать отслеживание приветствия
+
+        Args:
+            estimated_duration: оценочная длительность приветствия в секундах
+            total_bytes: общее количество байт аудио приветствия
+        """
+        self.is_greeting_active = True
+        self.greeting_start_time = datetime.now()
+        self.greeting_estimated_duration = estimated_duration
+        self.greeting_total_bytes = total_bytes
+        self.greeting_bytes_sent = 0
+        self.start_speaking()
+
+    def end_greeting(self):
+        """Завершить отслеживание приветствия"""
+        self.is_greeting_active = False
+        self.greeting_start_time = None
+        self.greeting_estimated_duration = None
+        self.greeting_bytes_sent = 0
+        self.greeting_total_bytes = None
+
+    def update_greeting_progress(self, bytes_sent: int):
+        """
+        Обновить прогресс отправки приветствия
+
+        Args:
+            bytes_sent: количество байт отправлено в этом чанке
+        """
+        self.greeting_bytes_sent += bytes_sent
+
     def update_transcript(self, text: str, is_partial: bool = True):
         """
         Обновить текущую транскрипцию
