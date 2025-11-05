@@ -521,6 +521,7 @@ async def generate_and_send_response(
                             tech_start + 6 :
                         ]  # +6 для длины '<TECH>'
                         remaining = ""
+                        print(f"🔧 TECH блок начат")
                     else:
                         # TECH тега нет - весь текст обычный
                         text_for_buffer += remaining
@@ -532,17 +533,20 @@ async def generate_and_send_response(
                         # Закрываем TECH блок
                         tech_buffer += remaining[:tech_end]
                         tech_tag_open = False
+                        print(f"🔧 TECH блок закрыт: {tech_buffer[:100]}...")
                         tech_buffer = ""  # Очищаем буфер TECH блока
                         remaining = remaining[tech_end + 7 :]  # +7 для длины '</TECH>'
                     else:
                         # Закрывающего тега нет - накапливаем в TECH буфер
                         tech_buffer += remaining
                         remaining = ""
+                        print(f"🔧 TECH блок накапливается... (длина: {len(tech_buffer)})")
 
             # Добавляем только обычный текст (без TECH блоков) в text_buffer
             if text_for_buffer:
                 text_buffer += text_for_buffer
                 # Отправляем текстовый чанк для отображения (только обычный текст)
+                print(f"📤 Отправка текста клиенту: '{text_for_buffer[:50]}...'")
                 await websocket.send_json(
                     {"type": "text_chunk", "text": text_for_buffer}
                 )
