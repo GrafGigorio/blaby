@@ -202,7 +202,7 @@ async def lifespan(app: FastAPI):
         streaming_stt_module = StreamingSTTModule()
 
         # Инициализируем LLM
-        llm_module = LLMModule(model_name="gpt-oss:20b")
+        llm_module = LLMModule(model_name="llama3.1:8b")
 
         # Инициализируем TTS
         tts_module = TTSModule()
